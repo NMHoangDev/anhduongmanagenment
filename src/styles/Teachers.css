@@ -1,0 +1,110 @@
+.teachers-table-container {
+    background-color: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+}
+
+.teachers-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 15px;
+}
+
+.teachers-table thead th {
+    background: linear-gradient(90deg, #e3f0ff, #f8fbff);
+    color: #1976d2;
+    font-weight: 600;
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 2px solid #e3eaf5;
+}
+
+.teachers-table tbody tr {
+    transition: background-color 0.2s;
+}
+
+.teachers-table tbody tr:hover {
+    background-color: #f5f9ff;
+}
+
+.teachers-table tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid #edf2f7;
+    color: #333;
+}
+
+.action-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+}
+
+.action-button {
+    border: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.view-button {
+    background-color: #e3f0ff;
+    color: #1976d2;
+}
+
+.view-button:hover {
+    background-color: #d1e5ff;
+}
+
+.edit-button {
+    background-color: #e6f7e6;
+    color: #28a745;
+}
+
+.edit-button:hover {
+    background-color: #d4f0d4;
+}
+
+.delete-button {
+    background-color: #ffebeb;
+    color: #dc3545;
+}
+
+.delete-button:hover {
+    background-color: #ffe0e0;
+}
+
+.schedule-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 14px;
+}
+
+.schedule-table th {
+    background-color: #f5f9ff;
+    color: #1976d2;
+    font-weight: 600;
+    padding: 10px;
+    text-align: left;
+    border-bottom: 1px solid #e0e9f5;
+}
+
+.schedule-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.schedule-table tr:last-child td {
+    border-bottom: none;
+}
+
+.schedule-table tr:hover {
+    background-color: #f9fbff;
+}
