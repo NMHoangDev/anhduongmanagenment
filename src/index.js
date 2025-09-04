@@ -1,10 +1,22 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './index.css';
-import App from './App';
-import reportWebVitals from './reportWebVitals';
+import React from "react";
+import ReactDOM from "react-dom/client";
+import "./index.css";
+import App from "./App";
+import reportWebVitals from "./reportWebVitals";
+import "./services/firebase";
+import { initToolbar } from "@stagewise/toolbar";
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const stagewiseConfig = {
+  plugins: [], // có thể thêm plugin tùy biến ở đây sau
+};
+function setupStagewise() {
+  if (process.env.NODE_ENV === "development") {
+    initToolbar(stagewiseConfig);
+  }
+}
+
+setupStagewise();
+const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <React.StrictMode>
     <App />
