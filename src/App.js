@@ -269,20 +269,6 @@ function App() {
               </ProtectedRoute>
             }
           />
-
-          <Route
-            path="/student/dashboard"
-            element={
-              <ProtectedRoute requiredRole="student">
-                <div style={{ padding: "40px", textAlign: "center" }}>
-                  <h2>Trang học sinh đang phát triển</h2>
-                  <p>
-                    Chức năng dành cho học sinh sẽ được bổ sung trong tương lai.
-                  </p>
-                </div>
-              </ProtectedRoute>
-            }
-          />
         </Routes>
       </Router>
     </AuthProvider>
