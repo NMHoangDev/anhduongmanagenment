@@ -1,4 +1,3 @@
-import React from "react";
 import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -12,7 +11,7 @@ import Profile from "./pages/Profile";
 import TeacherSalary from "./pages/TeacherSalary";
 import Timetable from "./pages/Timetable";
 import Login from "./pages/Login";
-import TestLogin from "./TestLogin";
+
 import RegisterTest from "./RegisterTest";
 import Register from "./pages/Register";
 import TeacherClassManagement from "./pages/teacher/ClassManagement";
@@ -39,7 +38,7 @@ function App() {
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
-          <Route path="/test" element={<TestLogin />} />
+
           <Route path="/register-test" element={<RegisterTest />} />
           <Route path="/register" element={<Register />} />
 
