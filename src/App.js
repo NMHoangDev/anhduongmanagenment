@@ -30,6 +30,7 @@ import Facility from "./pages/Facility";
 import Classes from "./pages/Classes";
 import Parents from "./pages/Parents";
 import "./App.css";
+import ExpenseManagement from "./pages/ExpensePage";
 
 function App() {
   return (
@@ -165,6 +166,14 @@ function App() {
             element={
               <ProtectedRoute adminOnly>
                 <Parents />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/expense-management"
+            element={
+              <ProtectedRoute adminOnly>
+                <ExpenseManagement />
               </ProtectedRoute>
             }
           />

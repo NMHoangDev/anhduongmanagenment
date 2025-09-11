@@ -23,6 +23,7 @@ import {
   FaSchool,
   FaSignOutAlt,
   FaUser,
+  FaMoneyBillWave,
 } from "react-icons/fa";
 
 export default function Sidebar() {
@@ -201,6 +202,16 @@ export default function Sidebar() {
               }`}
             >
               <FaTools /> Quản lý cơ sở vật chất
+            </Link>
+          </li>
+          <li>
+            <Link
+              to="/expense-management"
+              className={`${styles.menuItem} ${
+                isActive("/expense-management") ? styles.menuItemActive : ""
+              }`}
+            >
+              <FaMoneyBillWave /> Quản lí chi phí
             </Link>
           </li>
         </ul>

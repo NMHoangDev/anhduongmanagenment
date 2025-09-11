@@ -7,6 +7,7 @@ import {
   where,
   orderBy,
   setDoc,
+  updateDoc,
   Timestamp,
 } from "firebase/firestore";
 import { db } from "./firebase";
@@ -132,11 +133,21 @@ export const saveMonthlyPayroll = async (payroll) => {
   const { teacherId, month } = payroll;
   if (!teacherId || !month) throw new Error("Missing teacherId/month");
   const id = `${teacherId}_${month}`;
-  await setDoc(doc(db, "payroll", id), {
-    ...payroll,
-    calculatedAt: new Date().toISOString(),
-    locked: payroll.locked ?? false,
-  });
+  await setDoc(
+    doc(db, "payroll", id),
+    {
+      ...payroll,
+      calculatedAt: new Date().toISOString(),
+      locked: payroll.locked ?? false,
+      // đảm bảo trường paid luôn tồn tại -> mặc định chưa chi trả
+      paid: payroll.paid ?? false,
+      paidAt: payroll.paidAt ?? null,
+      paidBy: payroll.paidBy ?? null,
+      paidAmount:
+        typeof payroll.paidAmount !== "undefined" ? payroll.paidAmount : null,
+    },
+    { merge: true }
+  );
   return id;
 };
 
@@ -147,4 +158,81 @@ export const getMonthlyPayroll = async ({ teacherId, month }) => {
   const id = `${teacherId}_${month}`;
   const snap = await getDoc(doc(db, "payroll", id));
   return snap.exists() ? { id, ...snap.data() } : null;
+};
+
+/**
+ * Lấy các bảng lương đã chốt nhưng chưa chi trả (paid === false)
+ * - nếu month cung cấp (YYYY-MM) sẽ lọc theo tháng đó
+ */
+export const getUnpaidPayrolls = async ({ month } = {}) => {
+  try {
+    const col = collection(db, "payroll");
+    let q;
+    if (month) {
+      q = query(
+        col,
+        where("month", "==", month),
+        where("paid", "==", false),
+        where("locked", "==", true),
+        orderBy("teacherId")
+      );
+    } else {
+      q = query(
+        col,
+        where("paid", "==", false),
+        where("locked", "==", true),
+        orderBy("month", "desc")
+      );
+    }
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.error("getUnpaidPayrolls error:", err);
+    throw err;
+  }
+};
+
+/**
+ * Lấy các bảng lương chưa chi trả của 1 giáo viên
+ */
+export const getUnpaidPayrollsForTeacher = async ({ teacherId }) => {
+  if (!teacherId) throw new Error("teacherId is required");
+  try {
+    const col = collection(db, "payroll");
+    const q = query(
+      col,
+      where("teacherId", "==", teacherId),
+      where("paid", "==", false),
+      orderBy("month", "desc")
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.error("getUnpaidPayrollsForTeacher error:", err);
+    throw err;
+  }
+};
+
+/**
+ * Đánh dấu bảng lương đã chi trả
+ * payload: { teacherId, month, paidBy, paidAmount }
+ */
+export const markPayrollAsPaid = async ({
+  teacherId,
+  month,
+  paidBy = null,
+  paidAmount = null,
+}) => {
+  if (!teacherId || !month) throw new Error("teacherId and month are required");
+  const id = `${teacherId}_${month}`;
+  const ref = doc(db, "payroll", id);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Payroll not found");
+  const nowTs = Timestamp.fromDate(new Date());
+  await updateDoc(ref, {
+    paid: true,
+    paidAt: nowTs,
+    paidBy,
+    paidAmount,
+  });
 };

@@ -17,19 +17,20 @@ import {
   computeMonthlySalary,
   saveMonthlyPayroll,
   getMonthlyPayroll,
+  markPayrollAsPaid,
+  getUnpaidPayrolls,
 } from "../services/teacherSalaryService";
 
-// Hàm tạo dữ liệu giáo viên cơ bản
-const generateTeacherData = (teacher) => {
-  return {
-    ...teacher,
-    status: ["paid", "pending"][Math.floor(Math.random() * 2)],
-    payroll: null,
-    payrollSaved: false,
-    baseSalaryInput: 8000000,
-    totalSessionsInput: 26,
-  };
-};
+// Hàm tạo dữ liệu giáo viên cơ bản (status sẽ được sync với payroll service)
+const generateTeacherData = (teacher) => ({
+  ...teacher,
+  // status: 'paid' | 'unpaid' (unpaid covers "chưa tính" / "chưa trả")
+  status: "unpaid",
+  payroll: null,
+  payrollSaved: false,
+  baseSalaryInput: 8000000,
+  totalSessionsInput: 26,
+});
 
 export default function TeacherSalary() {
   const [salaries, setSalaries] = useState([]);
@@ -70,7 +71,7 @@ export default function TeacherSalary() {
         }));
         const salaryData = teachersData.map(generateTeacherData);
 
-        // check saved payrolls for visible teachers (non-blocking)
+        // check saved payrolls for visible teachers and set consistent status
         await Promise.all(
           salaryData.map(async (t) => {
             try {
@@ -81,9 +82,19 @@ export default function TeacherSalary() {
               if (existing) {
                 t.payrollSaved = true;
                 t.payroll = existing;
+                // if payroll doc exists, paid flag determines status
+                t.status = existing.paid ? "paid" : "unpaid";
+              } else {
+                // no payroll stored -> keep unpaid (means not computed/saved => not paid)
+                t.payrollSaved = false;
+                t.payroll = null;
+                t.status = "unpaid";
               }
-            } catch {
-              // ignore
+            } catch (err) {
+              console.warn("error checking payroll for", t.id, err);
+              t.payrollSaved = false;
+              t.payroll = null;
+              t.status = "unpaid";
             }
           })
         );
@@ -110,13 +121,35 @@ export default function TeacherSalary() {
     setIsQrModalOpen(false);
   };
 
-  const handleConfirmPayment = (teacherId) => {
-    setSalaries((currentSalaries) =>
-      currentSalaries.map((s) =>
-        s.id === teacherId ? { ...s, status: "paid" } : s
-      )
-    );
-    handleCloseQrModal();
+  const handleConfirmPayment = async (teacherId) => {
+    try {
+      const t = salaries.find((s) => s.id === teacherId);
+      if (!t || !t.payrollSaved) {
+        alert("Bảng lương chưa được lưu, vui lòng lưu trước khi chi trả.");
+        return;
+      }
+      await markPayrollAsPaid({
+        teacherId,
+        month,
+        paidBy: "ui",
+        paidAmount: t.payroll?.salary ?? null,
+      });
+      setSalaries((currentSalaries) =>
+        currentSalaries.map((s) =>
+          s.id === teacherId
+            ? {
+                ...s,
+                status: "paid",
+                payroll: { ...(s.payroll || {}), paid: true },
+              }
+            : s
+        )
+      );
+      handleCloseQrModal();
+    } catch (err) {
+      console.error("Error marking paid:", err);
+      alert("Lỗi khi xác nhận chi trả: " + (err.message || err));
+    }
   };
 
   const updateBaseSalary = (teacherId, value) => {
@@ -163,7 +196,12 @@ export default function TeacherSalary() {
       setSalaries((current) =>
         current.map((t) =>
           t.id === teacher.id
-            ? { ...t, payroll: { ...res }, payrollSaved: false }
+            ? {
+                ...t,
+                payroll: { ...res },
+                payrollSaved: false,
+                status: "unpaid",
+              }
             : t
         )
       );
@@ -183,14 +221,23 @@ export default function TeacherSalary() {
       }
       const payload = {
         ...teacher.payroll,
+        teacherId: teacher.id,
         teacherName: teacher.name,
+        month,
         savedBy: "ui",
         locked: true,
       };
-      await saveMonthlyPayroll(payload);
+      const id = await saveMonthlyPayroll(payload);
       setSalaries((current) =>
         current.map((t) =>
-          t.id === teacher.id ? { ...t, payrollSaved: true } : t
+          t.id === teacher.id
+            ? {
+                ...t,
+                payrollSaved: true,
+                payroll: payload,
+                status: payload.paid ? "paid" : "unpaid",
+              }
+            : t
         )
       );
       alert("Lưu bảng lương thành công.");

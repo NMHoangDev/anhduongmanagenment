@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   FaUserGraduate,
   FaChalkboardTeacher,
@@ -19,40 +19,23 @@ import {
   Line,
   ResponsiveContainer,
 } from "recharts";
-
-// Dữ liệu mẫu
-const summary = {
-  students: 320,
-  teachers: 25,
-  revenue: 120000000,
-  expense: 90000000,
-  activeClasses: 18,
-};
-
-const revenueExpenseData = [
-  { month: "T1", revenue: 100, expense: 70 },
-  { month: "T2", revenue: 120, expense: 75 },
-  { month: "T3", revenue: 110, expense: 90 },
-  { month: "T4", revenue: 130, expense: 80 },
-  { month: "T5", revenue: 140, expense: 100 },
-  { month: "T6", revenue: 120, expense: 95 },
-];
-
-const studentByGrade = [
-  { name: "Khối 1", value: 40 },
-  { name: "Khối 2", value: 38 },
-  { name: "Khối 3", value: 35 },
-  { name: "Khối 4", value: 42 },
-  { name: "Khối 5", value: 38 },
-];
-
-const studentStatus = [
-  { name: "Đang học", value: 300 },
-  { name: "Đã nghỉ", value: 10 },
-  { name: "Nợ học phí", value: 10 },
-];
+import { Spin, message } from "antd";
+import {
+  getDashboardSummary,
+  getRevenueExpenseChart,
+  getStudentsByGrade,
+  getStudentsByStatus,
+} from "../services/expenseManagentService";
 
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#e83e8c"];
+
+function formatMoney(amount) {
+  if (!amount) return "0 ₫";
+  return new Intl.NumberFormat("vi-VN", {
+    style: "currency",
+    currency: "VND",
+  }).format(amount);
+}
 
 // Component SummaryCard
 function SummaryCard({ icon, label, value, color, bgColor }) {
@@ -101,13 +84,70 @@ function SummaryCard({ icon, label, value, color, bgColor }) {
 }
 
 export default function Dashboard() {
+  const [loading, setLoading] = useState(true);
+  const [summary, setSummary] = useState({
+    students: 0,
+    teachers: 0,
+    revenue: 0,
+    expense: 0,
+    activeClasses: 0,
+    profit: 0,
+  });
+  const [revenueExpenseData, setRevenueExpenseData] = useState([]);
+  const [studentByGrade, setStudentByGrade] = useState([]);
+  const [studentStatus, setStudentStatus] = useState([]);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      // Fetch all dashboard data in parallel
+      const [summaryData, chartData, gradeData, statusData] = await Promise.all(
+        [
+          getDashboardSummary(),
+          getRevenueExpenseChart(),
+          getStudentsByGrade(),
+          getStudentsByStatus(),
+        ]
+      );
+
+      setSummary(summaryData);
+      setRevenueExpenseData(chartData);
+      setStudentByGrade(gradeData);
+      setStudentStatus(statusData);
+    } catch (error) {
+      console.error("Error fetching dashboard data:", error);
+      message.error("Có lỗi xảy ra khi tải dữ liệu dashboard");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          minHeight: "100vh",
+          background: "#f8fafc",
+        }}
+      >
+        <Spin size="large" />
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
         padding: "24px",
         background: "#f8fafc",
         minHeight: "100vh",
-        width: "100%", // Ensure full width
       }}
     >
       {/* Header */}
@@ -151,13 +191,13 @@ export default function Dashboard() {
         <SummaryCard
           icon={<FaMoneyBillWave size={32} />}
           label="Doanh thu tháng này"
-          value="120.000.000 ₫"
+          value={formatMoney(summary.revenue)}
           color="#06b6d4"
         />
         <SummaryCard
           icon={<FaFileInvoiceDollar size={32} />}
           label="Chi phí tháng này"
-          value="90.000.000 ₫"
+          value={formatMoney(summary.expense)}
           color="#ef4444"
         />
         <SummaryCard
@@ -167,6 +207,40 @@ export default function Dashboard() {
           color="#f59e0b"
         />
       </div>
+
+      {/* Profit Summary */}
+      {summary.profit !== 0 && (
+        <div
+          style={{
+            background: summary.profit > 0 ? "#dcfce7" : "#fee2e2",
+            borderRadius: "12px",
+            padding: "20px",
+            marginBottom: "32px",
+            textAlign: "center",
+            border: `2px solid ${summary.profit > 0 ? "#16a34a" : "#dc2626"}`,
+          }}
+        >
+          <h3
+            style={{
+              fontSize: "20px",
+              fontWeight: "600",
+              color: summary.profit > 0 ? "#16a34a" : "#dc2626",
+              margin: "0 0 8px 0",
+            }}
+          >
+            {summary.profit > 0 ? "📈 Lợi nhuận tháng này" : "📉 Lỗ tháng này"}
+          </h3>
+          <div
+            style={{
+              fontSize: "24px",
+              fontWeight: "700",
+              color: summary.profit > 0 ? "#16a34a" : "#dc2626",
+            }}
+          >
+            {formatMoney(Math.abs(summary.profit))}
+          </div>
+        </div>
+      )}
 
       {/* Charts Row */}
       <div
@@ -196,29 +270,48 @@ export default function Dashboard() {
           >
             📈 Doanh thu & Chi phí theo tháng
           </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={revenueExpenseData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" />
-              <YAxis unit="tr" />
-              <Tooltip />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="revenue"
-                name="Doanh thu"
-                stroke="#06b6d4"
-                strokeWidth={3}
-              />
-              <Line
-                type="monotone"
-                dataKey="expense"
-                name="Chi phí"
-                stroke="#ef4444"
-                strokeWidth={3}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          {revenueExpenseData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={revenueExpenseData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis unit="tr" />
+                <Tooltip
+                  formatter={(value, name) => [
+                    `${value} triệu đồng`,
+                    name === "revenue" ? "Doanh thu" : "Chi phí",
+                  ]}
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="revenue"
+                  name="Doanh thu"
+                  stroke="#06b6d4"
+                  strokeWidth={3}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="expense"
+                  name="Chi phí"
+                  stroke="#ef4444"
+                  strokeWidth={3}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div
+              style={{
+                height: "300px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#666",
+              }}
+            >
+              Chưa có dữ liệu biểu đồ
+            </div>
+          )}
         </div>
 
         {/* Students by Grade */}
@@ -240,28 +333,42 @@ export default function Dashboard() {
           >
             👥 Học sinh theo khối
           </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={studentByGrade}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                outerRadius={100}
-                label
-              >
-                {studentByGrade.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={COLORS[index % COLORS.length]}
-                  />
-                ))}
-              </Pie>
-              <Tooltip />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
+          {studentByGrade.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={studentByGrade}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={100}
+                  label
+                >
+                  {studentByGrade.map((entry, index) => (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={COLORS[index % COLORS.length]}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div
+              style={{
+                height: "300px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#666",
+              }}
+            >
+              Chưa có dữ liệu học sinh
+            </div>
+          )}
         </div>
       </div>
 
@@ -284,39 +391,51 @@ export default function Dashboard() {
         >
           📊 Tình trạng học sinh
         </h3>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: "16px",
-          }}
-        >
-          {studentStatus.map((status, index) => (
-            <div
-              key={index}
-              style={{
-                padding: "20px",
-                borderRadius: "8px",
-                backgroundColor: COLORS[index],
-                color: "#fff",
-                textAlign: "center",
-              }}
-            >
+        {studentStatus.length > 0 ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: "16px",
+            }}
+          >
+            {studentStatus.map((status, index) => (
               <div
+                key={index}
                 style={{
-                  fontSize: "28px",
-                  fontWeight: "700",
-                  marginBottom: "8px",
+                  padding: "20px",
+                  borderRadius: "8px",
+                  backgroundColor: COLORS[index],
+                  color: "#fff",
+                  textAlign: "center",
                 }}
               >
-                {status.value}
+                <div
+                  style={{
+                    fontSize: "28px",
+                    fontWeight: "700",
+                    marginBottom: "8px",
+                  }}
+                >
+                  {status.value}
+                </div>
+                <div style={{ fontSize: "14px", opacity: 0.9 }}>
+                  {status.name}
+                </div>
               </div>
-              <div style={{ fontSize: "14px", opacity: 0.9 }}>
-                {status.name}
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div
+            style={{
+              textAlign: "center",
+              color: "#666",
+              padding: "20px",
+            }}
+          >
+            Chưa có dữ liệu trạng thái học sinh
+          </div>
+        )}
       </div>
     </div>
   );
