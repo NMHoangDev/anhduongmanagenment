@@ -2,7 +2,11 @@ import React, { useState, useEffect } from "react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { FaEdit, FaCamera, FaTimes } from "react-icons/fa";
-import { getCurrentUser, onAuthStateChange } from "../services/authService";
+import {
+  getCurrentUser,
+  onAuthStateChange,
+  updateUserProfile,
+} from "../services/authService";
 
 const defaultUser = {
   avatar: "https://randomuser.me/api/portraits/women/44.jpg",
@@ -22,6 +26,20 @@ export default function Profile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 900);
   const [loading, setLoading] = useState(true);
 
+  // local states for password changes (don't store plain password in user object)
+  const [newPassword, setNewPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [avatarFile, setAvatarFile] = useState(null);
+
+  // helper: convert File -> base64 string (data URL)
+  const fileToBase64 = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 900);
     window.addEventListener("resize", onResize);
@@ -39,14 +57,14 @@ export default function Profile() {
             ...prev,
             avatar: current.avatar || prev.avatar,
             name: current.name || current.displayName || prev.name,
-            nick: current.nick || prev.nick,
+            nick: current.username || current.nick || prev.nick,
             email: current.email || prev.email,
             phone: current.phone || prev.phone,
             gender: current.gender || prev.gender,
             country: current.country || prev.country,
             language: current.language || prev.language,
             timezone: current.timezone || prev.timezone,
-            ...current, // keep any other profile fields
+            ...current, // keep any other profile fields (including uid)
           }));
         } else {
           // not logged in -> keep defaults or clear
@@ -68,7 +86,7 @@ export default function Profile() {
           ...prev,
           avatar: u.avatar || prev.avatar,
           name: u.name || u.displayName || prev.name,
-          nick: u.nick || prev.nick,
+          nick: u.username || u.nick || prev.nick,
           email: u.email || prev.email,
           phone: u.phone || prev.phone,
           gender: u.gender || prev.gender,
@@ -92,17 +110,121 @@ export default function Profile() {
   const handleChange = (key) => (e) =>
     setUser((u) => ({ ...u, [key]: e.target.value }));
 
-  const handleAvatarChange = (e) => {
+  const handleAvatarChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const url = URL.createObjectURL(file);
-    setUser((u) => ({ ...u, avatar: url }));
+
+    // show local preview immediately
+    const previewUrl = URL.createObjectURL(file);
+    setAvatarFile(file);
+    setUser((u) => ({ ...u, avatar: previewUrl }));
+
+    // convert to base64 and save immediately to Firestore via service
+    try {
+      setLoading(true);
+      const base64 = await fileToBase64(file);
+      // call service to persist avatar (this will create/merge fields in users / teachers)
+      const res = await updateUserProfile(user.uid, { avatar: base64 });
+      if (res.success) {
+        // ensure UI uses stored value (could be base64 or a processed URL)
+        setUser((prev) => ({
+          ...prev,
+          ...res.user,
+          avatar:
+            typeof res.user?.avatar !== "undefined" ? res.user.avatar : base64,
+        }));
+        setAvatarFile(null);
+      } else {
+        console.error("updateUserProfile failed:", res.error);
+        alert(res.error || "Lỗi khi cập nhật ảnh đại diện.");
+      }
+    } catch (err) {
+      console.error("Avatar conversion/save error:", err);
+      alert("Không thể lưu ảnh đại diện. Vui lòng thử lại.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSave = () => {
-    // TODO: call API to save
-    setEditing(false);
-    alert("Đã lưu (demo)");
+  const handleSave = async () => {
+    if (!user || !user.uid) {
+      alert("Không tìm thấy người dùng hiện tại.");
+      return;
+    }
+
+    // if user tries to change password/email require currentPassword
+    if (
+      (newPassword && !currentPassword) ||
+      (user.email &&
+        user.email !== (user.originalEmail || user.email) &&
+        !currentPassword)
+    ) {
+      // note: we use user.originalEmail below to track original loaded email; if not available require currentPassword when email changes
+      alert(
+        "Để thay đổi email hoặc mật khẩu, vui lòng nhập mật khẩu hiện tại."
+      );
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const updates = {};
+      if (user.name) updates.name = user.name;
+      if (user.nick) updates.username = user.nick;
+      // If a new avatar file was selected, convert to base64 and store that.
+      if (avatarFile) {
+        try {
+          const base64 = await fileToBase64(avatarFile);
+          updates.avatar = base64;
+        } catch (convErr) {
+          console.error("Avatar conversion failed:", convErr);
+          alert("Không thể chuyển ảnh sang base64. Vui lòng thử lại.");
+          setLoading(false);
+          return;
+        }
+      } else if (typeof user.avatar !== "undefined") {
+        // no new file selected -> keep existing avatar value (could be url or base64)
+        updates.avatar = user.avatar;
+      }
+      if (user.email) updates.email = user.email;
+      if (newPassword) updates.password = newPassword;
+      if (currentPassword) updates.currentPassword = currentPassword;
+      if (user.phone) updates.phone = user.phone;
+      if (user.gender) updates.gender = user.gender;
+      if (user.country) updates.country = user.country;
+      if (user.language) updates.language = user.language;
+      if (user.timezone) updates.timezone = user.timezone;
+
+      const res = await updateUserProfile(user.uid, updates);
+      if (res.success) {
+        // merge returned user doc if available
+        setUser((prev) => ({
+          ...prev,
+          ...res.user,
+          // keep display values if returned user doesn't contain them
+          name: res.user?.name || prev.name,
+          nick: res.user?.username || prev.nick,
+          avatar:
+            typeof res.user?.avatar !== "undefined"
+              ? res.user.avatar
+              : prev.avatar,
+          email: res.user?.email || prev.email,
+        }));
+        // clear avatarFile after successful save
+        setAvatarFile(null);
+        setEditing(false);
+        setNewPassword("");
+        setCurrentPassword("");
+        alert("Cập nhật thông tin thành công.");
+      } else {
+        alert(res.error || "Lỗi khi cập nhật thông tin.");
+      }
+    } catch (err) {
+      console.error("Save profile error:", err);
+      alert(err.message || "Lỗi khi lưu profile.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -135,7 +257,20 @@ export default function Profile() {
                   <div style={pageStyles.nameRow}>
                     <div style={pageStyles.name}>{user.name}</div>
                     <button
-                      onClick={() => setEditing((v) => !v)}
+                      onClick={() => {
+                        if (editing) {
+                          // cancel edits: reload current user
+                          (async () => {
+                            const cur = await getCurrentUser();
+                            if (cur) setUser((prev) => ({ ...prev, ...cur }));
+                          })();
+                          setNewPassword("");
+                          setCurrentPassword("");
+                          setEditing(false);
+                        } else {
+                          setEditing(true);
+                        }
+                      }}
                       style={pageStyles.editBtn}
                       title={editing ? "Hủy" : "Chỉnh sửa"}
                     >
@@ -151,9 +286,9 @@ export default function Profile() {
             {/* Body */}
             <div style={pageStyles.cardBody}>
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
-                  handleSave();
+                  await handleSave();
                 }}
                 style={{
                   display: "grid",
@@ -163,7 +298,7 @@ export default function Profile() {
                 }}
               >
                 <div style={pageStyles.field}>
-                  <label style={pageStyles.label}>Full Name</label>
+                  <label style={pageStyles.label}>Tên</label>
                   <input
                     value={user.name}
                     onChange={handleChange("name")}
@@ -174,7 +309,7 @@ export default function Profile() {
                 </div>
 
                 <div style={pageStyles.field}>
-                  <label style={pageStyles.label}>Nick Name</label>
+                  <label style={pageStyles.label}>Username</label>
                   <input
                     value={user.nick}
                     onChange={handleChange("nick")}
@@ -185,7 +320,7 @@ export default function Profile() {
                 </div>
 
                 <div style={pageStyles.field}>
-                  <label style={pageStyles.label}>Gender</label>
+                  <label style={pageStyles.label}>Giới tính</label>
                   <select
                     value={user.gender}
                     onChange={handleChange("gender")}
@@ -199,7 +334,7 @@ export default function Profile() {
                 </div>
 
                 <div style={pageStyles.field}>
-                  <label style={pageStyles.label}>Country</label>
+                  <label style={pageStyles.label}>Quốc tịch</label>
                   <input
                     value={user.country}
                     onChange={handleChange("country")}
@@ -209,25 +344,43 @@ export default function Profile() {
                   />
                 </div>
 
+                {/* Email */}
                 <div style={pageStyles.field}>
-                  <label style={pageStyles.label}>Language</label>
+                  <label style={pageStyles.label}>Email</label>
                   <input
-                    value={user.language}
-                    onChange={handleChange("language")}
+                    value={user.email}
+                    onChange={handleChange("email")}
                     disabled={!editing}
                     style={editing ? pageStyles.input : pageStyles.inputPlain}
-                    placeholder="Language"
+                    placeholder="you@domain.com"
+                    type="email"
+                  />
+                </div>
+
+                {/* Password change fields */}
+                <div style={pageStyles.field}>
+                  <label style={pageStyles.label}>Mật khẩu mới</label>
+                  <input
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    disabled={!editing}
+                    style={editing ? pageStyles.input : pageStyles.inputPlain}
+                    placeholder="Để trống nếu không đổi"
+                    type="password"
                   />
                 </div>
 
                 <div style={pageStyles.field}>
-                  <label style={pageStyles.label}>Time Zone</label>
+                  <label style={pageStyles.label}>
+                    Mật khẩu hiện tại (bắt buộc nếu đổi email/mật khẩu)
+                  </label>
                   <input
-                    value={user.timezone}
-                    onChange={handleChange("timezone")}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
                     disabled={!editing}
                     style={editing ? pageStyles.input : pageStyles.inputPlain}
-                    placeholder="Time zone"
+                    placeholder="Nhập mật khẩu hiện tại"
+                    type="password"
                   />
                 </div>
 
@@ -240,7 +393,11 @@ export default function Profile() {
                         <div style={pageStyles.smallMuted}>{user.email}</div>
                         <div style={pageStyles.smallMuted}>1 month ago</div>
                       </div>
-                      <button type="button" style={pageStyles.addEmailBtn}>
+                      <button
+                        type="button"
+                        style={pageStyles.addEmailBtn}
+                        disabled
+                      >
                         Add Email Address
                       </button>
                     </div>
@@ -259,14 +416,25 @@ export default function Profile() {
                   {editing ? (
                     <>
                       <button
-                        onClick={() => setEditing(false)}
+                        onClick={async () => {
+                          // cancel: reload current user from auth
+                          const cur = await getCurrentUser();
+                          if (cur) setUser((prev) => ({ ...prev, ...cur }));
+                          setNewPassword("");
+                          setCurrentPassword("");
+                          setEditing(false);
+                        }}
                         type="button"
                         style={pageStyles.secondaryBtn}
                       >
                         Cancel
                       </button>
-                      <button type="submit" style={pageStyles.primaryBtn}>
-                        Save Changes
+                      <button
+                        type="submit"
+                        style={pageStyles.primaryBtn}
+                        disabled={loading}
+                      >
+                        {loading ? "Saving..." : "Save Changes"}
                       </button>
                     </>
                   ) : (
