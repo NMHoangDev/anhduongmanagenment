@@ -1,5 +1,22 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
+import {
+  Card,
+  Row,
+  Col,
+  Typography,
+  Select,
+  Table,
+  InputNumber,
+  Button,
+  Tag,
+  message,
+} from "antd";
+import { FaClipboardList, FaSave } from "react-icons/fa";
 
+const { Title, Text } = Typography;
+const { Option } = Select;
+
+// Mock data
 const classes = [
   {
     id: "1A",
@@ -7,132 +24,288 @@ const classes = [
     students: [
       { id: "HS01", name: "Nguyễn Văn An" },
       { id: "HS02", name: "Trần Thị Bích" },
+      { id: "HS03", name: "Lê Minh Tuấn" },
     ],
   },
   {
     id: "2A",
     name: "Lớp 2A",
     students: [
-      { id: "HS03", name: "Lê Minh Tuấn" },
       { id: "HS04", name: "Phạm Thị Hoa" },
+      { id: "HS05", name: "Vũ Đức Long" },
     ],
   },
 ];
 const subjects = ["Toán", "Văn", "Anh"];
 
 export default function TeacherGrade() {
-  const [selectedClass, setSelectedClass] = useState(classes[0].id);
+  const [selectedClassId, setSelectedClassId] = useState(classes[0].id);
+  const [selectedSubject, setSelectedSubject] = useState(subjects[0]);
   const [grades, setGrades] = useState({});
 
-  const currentClass = classes.find((cls) => cls.id === selectedClass);
+  const currentClass = useMemo(
+    () => classes.find((c) => c.id === selectedClassId),
+    [selectedClassId]
+  );
 
   const handleChange = (studentId, subject, value) => {
+    const num =
+      value === null || value === undefined ? undefined : Number(value);
     setGrades((prev) => ({
       ...prev,
       [studentId]: {
         ...prev[studentId],
-        [subject]: value,
+        [subject]: num,
       },
     }));
   };
 
+  const calcAverage = (studentId) => {
+    const g = grades[studentId] || {};
+    const vals = subjects
+      .map((s) => (typeof g[s] === "number" ? g[s] : null))
+      .filter((v) => v !== null);
+    if (!vals.length) return undefined;
+    return Number((vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1));
+  };
+
+  const completion = useMemo(() => {
+    const total = (currentClass?.students?.length || 0) * subjects.length;
+    if (!total) return 0;
+    let filled = 0;
+    currentClass?.students?.forEach((st) => {
+      subjects.forEach((s) => {
+        if (typeof grades[st.id]?.[s] === "number") filled += 1;
+      });
+    });
+    return Math.round((filled / total) * 100);
+  }, [currentClass, grades]);
+
+  const onSave = () => {
+    // placeholder: send grades to API / firestore
+    message.success(`Đã lưu điểm cho lớp ${currentClass?.name || "-"}`);
+  };
+
+  const getGradeColor = (g) => {
+    if (g === undefined || g === null) return "default";
+    if (g >= 8) return "green";
+    if (g >= 6.5) return "blue";
+    return "red";
+  };
+
+  const columns = [
+    {
+      title: "STT",
+      key: "index",
+      width: 70,
+      align: "center",
+      render: (_v, _r, idx) => (
+        <Text strong style={{ color: "#1890ff" }}>
+          {idx + 1}
+        </Text>
+      ),
+    },
+    {
+      title: "Học sinh",
+      dataIndex: "name",
+      key: "name",
+      render: (text, record) => (
+        <div>
+          <Text strong>{text}</Text>
+          <div style={{ fontSize: 12, color: "#999" }}>{record.id}</div>
+        </div>
+      ),
+    },
+    ...subjects.map((sub) => ({
+      title: sub,
+      key: sub,
+      align: "center",
+      render: (_t, record) => (
+        <InputNumber
+          min={0}
+          max={10}
+          step={0.1}
+          value={grades[record.id]?.[sub]}
+          onChange={(v) => handleChange(record.id, sub, v)}
+          style={{ width: 88 }}
+        />
+      ),
+    })),
+    {
+      title: "Điểm TB",
+      key: "avg",
+      align: "center",
+      render: (_t, record) => {
+        const avg = calcAverage(record.id);
+        return (
+          <Tag color={getGradeColor(avg)} style={{ borderRadius: 12 }}>
+            {typeof avg === "number" ? avg : "-"}
+          </Tag>
+        );
+      },
+    },
+  ];
+
   return (
-    <div style={{ padding: 40, minHeight: "100vh", background: "#f6f6fa" }}>
-      <h1 style={{ fontWeight: 700, fontSize: 28, marginBottom: 18 }}>
-        Nhập điểm học sinh
-      </h1>
-      <div
+    <div
+      style={{
+        background: "linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)",
+        minHeight: "100vh",
+        padding: 24,
+      }}
+    >
+      <Card
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 18,
           marginBottom: 24,
-        }}
-      >
-        <label style={{ fontWeight: 600 }}>Chọn lớp:</label>
-        <select
-          value={selectedClass}
-          onChange={(e) => setSelectedClass(e.target.value)}
-          style={{
-            padding: 8,
-            borderRadius: 8,
-            border: "1px solid #ccc",
-            fontSize: 16,
-          }}
-        >
-          {classes.map((cls) => (
-            <option key={cls.id} value={cls.id}>
-              {cls.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      <table
-        style={{
-          width: "100%",
-          background: "#fff",
-          borderRadius: 12,
-          overflow: "hidden",
-          boxShadow: "0 2px 8px #eee",
-          borderCollapse: "collapse",
-        }}
-      >
-        <thead style={{ background: "#f3f6fd" }}>
-          <tr>
-            <th style={{ padding: 12, textAlign: "left" }}>STT</th>
-            <th style={{ padding: 12, textAlign: "left" }}>Họ tên học sinh</th>
-            {subjects.map((sub) => (
-              <th key={sub} style={{ padding: 12, textAlign: "center" }}>
-                {sub}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {currentClass.students.map((s, idx) => (
-            <tr key={s.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-              <td style={{ padding: 10 }}>{idx + 1}</td>
-              <td style={{ padding: 10 }}>{s.name}</td>
-              {subjects.map((sub) => (
-                <td key={sub} style={{ padding: 10, textAlign: "center" }}>
-                  <input
-                    type="number"
-                    min={0}
-                    max={10}
-                    step={0.1}
-                    value={grades[s.id]?.[sub] || ""}
-                    onChange={(e) => handleChange(s.id, sub, e.target.value)}
-                    style={{
-                      width: 60,
-                      borderRadius: 6,
-                      border: "1px solid #ccc",
-                      padding: 6,
-                      fontSize: 15,
-                      textAlign: "center",
-                    }}
-                  />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <button
-        style={{
-          marginTop: 24,
-          background: "#1976d2",
-          color: "#fff",
+          borderRadius: 16,
           border: "none",
-          borderRadius: 8,
-          padding: "12px 32px",
-          fontWeight: 700,
-          fontSize: 17,
-          cursor: "pointer",
-          boxShadow: "0 2px 8px #1976d233",
+          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
         }}
+        bodyStyle={{ padding: 24 }}
       >
-        Lưu điểm
-      </button>
+        <Row justify="space-between" align="middle">
+          <Col>
+            <Title
+              level={2}
+              style={{
+                color: "#fff",
+                margin: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              <div
+                style={{
+                  background: "rgba(255,255,255,0.2)",
+                  padding: 12,
+                  borderRadius: 12,
+                }}
+              >
+                <FaClipboardList />
+              </div>
+              Nhập điểm học sinh
+            </Title>
+            <Text style={{ color: "rgba(255,255,255,0.9)" }}>
+              Ghi nhận điểm theo môn và lớp, hiển thị điểm trung bình
+            </Text>
+          </Col>
+          <Col>
+            <div
+              style={{
+                background: "rgba(255,255,255,0.12)",
+                padding: "8px 12px",
+                borderRadius: 12,
+                display: "flex",
+                gap: 12,
+                alignItems: "center",
+              }}
+            >
+              <Text strong style={{ color: "#fff" }}>
+                Lớp
+              </Text>
+              <Select
+                value={selectedClassId}
+                onChange={setSelectedClassId}
+                style={{ width: 140 }}
+                size="middle"
+              >
+                {classes.map((c) => (
+                  <Option key={c.id} value={c.id}>
+                    {c.name}
+                  </Option>
+                ))}
+              </Select>
+              <Text strong style={{ color: "#fff" }}>
+                Môn
+              </Text>
+              <Select
+                value={selectedSubject}
+                onChange={setSelectedSubject}
+                style={{ width: 140 }}
+                size="middle"
+              >
+                {subjects.map((s) => (
+                  <Option key={s} value={s}>
+                    {s}
+                  </Option>
+                ))}
+              </Select>
+            </div>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card
+        style={{ marginBottom: 24, borderRadius: 16 }}
+        bodyStyle={{ padding: 24 }}
+      >
+        <Row gutter={[16, 16]}>
+          <Col xs={24} sm={12} md={8} lg={6}>
+            <Card bodyStyle={{ padding: 16 }} style={{ borderRadius: 12 }}>
+              <Text type="secondary">Số học sinh</Text>
+              <div>
+                <Text strong style={{ fontSize: 24 }}>
+                  {currentClass?.students?.length || 0}
+                </Text>
+              </div>
+            </Card>
+          </Col>
+          <Col xs={24} sm={12} md={8} lg={6}>
+            <Card bodyStyle={{ padding: 16 }} style={{ borderRadius: 12 }}>
+              <Text type="secondary">Môn hiện tại</Text>
+              <div>
+                <Text strong style={{ fontSize: 18 }}>
+                  {selectedSubject}
+                </Text>
+              </div>
+            </Card>
+          </Col>
+          <Col xs={24} sm={12} md={8} lg={6}>
+            <Card bodyStyle={{ padding: 16 }} style={{ borderRadius: 12 }}>
+              <Text type="secondary">Hoàn thành nhập điểm</Text>
+              <div>
+                <Text strong style={{ fontSize: 18, color: "#52c41a" }}>
+                  {completion}%
+                </Text>
+              </div>
+            </Card>
+          </Col>
+          <Col xs={24} sm={12} md={8} lg={6}>
+            <Card
+              bodyStyle={{
+                padding: 16,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+              style={{ borderRadius: 12 }}
+            >
+              <Button
+                type="primary"
+                icon={<FaSave />}
+                onClick={onSave}
+                style={{
+                  background: "linear-gradient(135deg, #52c41a, #73d13d)",
+                  border: "none",
+                  borderRadius: 8,
+                }}
+              >
+                Lưu điểm
+              </Button>
+            </Card>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card style={{ borderRadius: 16 }} bodyStyle={{ padding: 24 }}>
+        <Table
+          columns={columns}
+          dataSource={currentClass?.students || []}
+          rowKey="id"
+          pagination={{ pageSize: 8 }}
+        />
+      </Card>
     </div>
   );
 }

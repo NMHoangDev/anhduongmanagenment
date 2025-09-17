@@ -6,43 +6,35 @@ import {
   Avatar,
   Form,
   Input,
-  Select,
   InputNumber,
   Button,
-  Modal,
   message,
 } from "antd";
 import { UserOutlined, EditOutlined } from "@ant-design/icons";
 import {
-  updateProfileForTeacher,
+  updateProfileForStudent,
   updateAvatarForUid,
 } from "../../services/profileTeacherService";
 import { useAuth } from "../../context/AuthContext";
 
-const { Option } = Select;
-
-export default function TeacherProfile() {
+export default function ProfileStudent() {
   const { currentUser } = useAuth();
 
   const [form] = Form.useForm();
   const [editing, setEditing] = useState(false);
-  const [pwModalVisible, setPwModalVisible] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState("");
   const fileInputRef = React.createRef();
 
-  // Fill form when currentUser changes
   useEffect(() => {
     form.setFieldsValue({
-      name: currentUser?.name || "Nguyễn Văn Bình",
+      name: currentUser?.name || "Học sinh",
       email: currentUser?.email || "",
       phone: currentUser?.phone || "",
-      subject: currentUser?.subjects || "Toán",
-      gradeLevel: currentUser?.gradeLevel || "",
-      teachingExperience: currentUser?.teachingExperience || 0,
-      qualifications: currentUser?.qualifications || "",
-      address: currentUser?.address || "",
-      gender: currentUser?.gender || "Nam",
-      age: currentUser?.age || 30,
+      classId: currentUser?.classId || "",
+      subjects: currentUser?.subjects || [],
+      goalsWeekly: currentUser?.goalsWeekly || "",
+      goalsMonthly: currentUser?.goalsMonthly || "",
+      competency: currentUser?.competency || "",
       avatar: currentUser?.avatar || "",
     });
     setAvatarPreview(currentUser?.avatar || "");
@@ -50,32 +42,17 @@ export default function TeacherProfile() {
 
   const handleSave = async (values) => {
     try {
-      // teacherId in `teachers` collection might be stored as currentUser.uid or another id mapping
-      // We pass teacherId as currentUser.uid when possible; the service will also read teacher doc to find uid if needed
-      const teacherId = currentUser?.uid || values.id;
-      await updateProfileForTeacher(teacherId, {
+      const studentId = currentUser?.uid || values.id;
+      await updateProfileForStudent(studentId, {
         ...values,
         uid: currentUser?.uid,
       });
-      message.success("Cập nhật thông tin thành công");
+      message.success("Cập nhật thông tin học sinh thành công");
       setEditing(false);
     } catch (err) {
       console.error(err);
       message.error("Có lỗi khi cập nhật thông tin");
     }
-  };
-
-  const handleChangePassword = (values) => {
-    // Placeholder: implement real password change with auth service if needed
-    console.log("Change password values:", values);
-    message.success("Đổi mật khẩu thành công (giả lập)");
-    setPwModalVisible(false);
-  };
-
-  const profileValues = form.getFieldsValue();
-
-  const handleAvatarClick = () => {
-    if (fileInputRef?.current) fileInputRef.current.click();
   };
 
   const fileToBase64 = (file) =>
@@ -91,16 +68,11 @@ export default function TeacherProfile() {
     if (!file) return;
     try {
       const base64 = await fileToBase64(file);
-      // preview locally
       setAvatarPreview(base64);
       form.setFieldsValue({ avatar: base64 });
-
-      // Save to backend (users and teachers)
       if (currentUser?.uid) {
         await updateAvatarForUid(currentUser.uid, base64);
         message.success("Ảnh đại diện đã được cập nhật");
-      } else {
-        message.warning("Không tìm thấy người dùng hiện tại để lưu ảnh");
       }
     } catch (err) {
       console.error(err);
@@ -108,10 +80,12 @@ export default function TeacherProfile() {
     }
   };
 
+  const profileValues = form.getFieldsValue();
+
   return (
     <div style={{ padding: 24 }}>
       <h1 style={{ fontWeight: 700, fontSize: 28, marginBottom: 18 }}>
-        Thông tin cá nhân
+        Hồ sơ học sinh
       </h1>
 
       <Card style={{ borderRadius: 12, marginBottom: 20 }}>
@@ -133,7 +107,12 @@ export default function TeacherProfile() {
                   style={{ display: "none" }}
                   onChange={handleFileChange}
                 />
-                <Button size="small" onClick={handleAvatarClick}>
+                <Button
+                  size="small"
+                  onClick={() =>
+                    fileInputRef.current && fileInputRef.current.click()
+                  }
+                >
                   Chọn ảnh
                 </Button>
               </div>
@@ -144,7 +123,7 @@ export default function TeacherProfile() {
               {profileValues?.name || "—"}
             </div>
             <div style={{ color: "#666", marginTop: 6 }}>
-              {profileValues?.subject}
+              {profileValues?.classId}
             </div>
             <div style={{ color: "#666", marginTop: 6 }}>
               {profileValues?.email}
@@ -193,11 +172,8 @@ export default function TeacherProfile() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="gender" label="Giới tính">
-                <Select disabled={!editing}>
-                  <Option value="Nam">Nam</Option>
-                  <Option value="Nữ">Nữ</Option>
-                </Select>
+              <Form.Item name="classId" label="Lớp">
+                <Input disabled={!editing} />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -209,40 +185,24 @@ export default function TeacherProfile() {
 
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="subject" label="Bộ môn">
+              <Form.Item name="subjects" label="Môn học">
                 <Input disabled={!editing} />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="gradeLevel" label="Khối dạy">
-                <Select disabled={!editing} allowClear>
-                  <Option value="1">Khối 1</Option>
-                  <Option value="2">Khối 2</Option>
-                  <Option value="3">Khối 3</Option>
-                  <Option value="4">Khối 4</Option>
-                  <Option value="5">Khối 5</Option>
-                  <Option value="Tất cả">Tất cả</Option>
-                </Select>
+              <Form.Item name="competency" label="Năng lực hiện tại">
+                <Input disabled={!editing} />
               </Form.Item>
             </Col>
           </Row>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="teachingExperience" label="Số năm kinh nghiệm">
-                <InputNumber
-                  disabled={!editing}
-                  style={{ width: "100%" }}
-                  min={0}
-                />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="qualifications" label="Bằng cấp / Chứng chỉ">
-                <Input disabled={!editing} />
-              </Form.Item>
-            </Col>
-          </Row>
+          <Form.Item name="goalsWeekly" label="Mục tiêu tuần">
+            <Input.TextArea disabled={!editing} />
+          </Form.Item>
+
+          <Form.Item name="goalsMonthly" label="Mục tiêu tháng">
+            <Input.TextArea disabled={!editing} />
+          </Form.Item>
 
           <Form.Item name="address" label="Địa chỉ">
             <Input disabled={!editing} />
@@ -258,72 +218,18 @@ export default function TeacherProfile() {
                   <Button onClick={() => setEditing(false)}>Hủy</Button>
                 </>
               ) : (
-                <Button onClick={() => setPwModalVisible(true)}>
-                  Đổi mật khẩu
+                <Button
+                  onClick={() =>
+                    message.info("Sử dụng nút Chỉnh sửa để cập nhật thông tin")
+                  }
+                >
+                  Chỉnh sửa
                 </Button>
               )}
             </div>
           </Form.Item>
         </Form>
       </Card>
-
-      <Modal
-        title="Đổi mật khẩu"
-        visible={pwModalVisible}
-        onCancel={() => setPwModalVisible(false)}
-        footer={null}
-      >
-        <Form layout="vertical" onFinish={handleChangePassword}>
-          <Form.Item
-            name="oldPassword"
-            label="Mật khẩu cũ"
-            rules={[{ required: true }]}
-          >
-            <Input.Password />
-          </Form.Item>
-          <Form.Item
-            name="newPassword"
-            label="Mật khẩu mới"
-            rules={[{ required: true, min: 6 }]}
-          >
-            <Input.Password />
-          </Form.Item>
-          <Form.Item
-            name="confirmPassword"
-            label="Xác nhận mật khẩu"
-            dependencies={["newPassword"]}
-            rules={[
-              {
-                required: true,
-                min: 6,
-                message: "Xác nhận mật khẩu không khớp",
-              },
-              ({ getFieldValue }) => ({
-                validator(_, value) {
-                  if (!value || getFieldValue("newPassword") === value) {
-                    return Promise.resolve();
-                  }
-                  return Promise.reject(
-                    new Error("Mật khẩu xác nhận không khớp")
-                  );
-                },
-              }),
-            ]}
-          >
-            <Input.Password />
-          </Form.Item>
-          <Form.Item>
-            <div
-              style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}
-            >
-              <Button onClick={() => setPwModalVisible(false)}>Hủy</Button>
-              <Button type="primary" htmlType="submit">
-                Lưu
-              </Button>
-            </div>
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
   );
 }

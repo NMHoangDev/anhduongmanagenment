@@ -4,7 +4,6 @@ import {
   FaEdit,
   FaTrash,
   FaSearch,
-  FaFilter,
   FaBook,
   FaCalendarAlt,
 } from "react-icons/fa";
@@ -315,6 +314,15 @@ export default function TeachersPage() {
 
   const handleEditTeacher = (teacher) => {
     setEditingTeacher(teacher);
+
+    // Normalize subjectIds: convert ids to full paths if needed
+    const normalizedSubjectIds = (teacher.subjectIds || []).map((s) => {
+      if (!s) return s;
+      if (typeof s === "string" && s.includes("/")) return s;
+      const match = subjects.find((sub) => sub.id === s || sub.path === s);
+      return match ? match.path : s;
+    });
+
     form.setFieldsValue({
       name: teacher.name,
       avatar: teacher.avatar,
@@ -322,12 +330,19 @@ export default function TeachersPage() {
       phone: teacher.phone,
       gender: teacher.gender,
       facilityId: teacher.facilityId,
-      subjectIds: teacher.subjectIds || [],
+      subjectIds: normalizedSubjectIds,
+      rating: teacher.rating,
     });
     setIsModalVisible(true);
   };
 
   const handleDeleteTeacher = async (teacherId) => {
+    if (!teacherId) {
+      console.error("handleDeleteTeacher called without teacherId");
+      message.error("ID giáo viên không hợp lệ, không thể xóa");
+      return;
+    }
+
     Modal.confirm({
       title: "Xác nhận xóa",
       content: "Bạn có chắc chắn muốn xóa giáo viên này không?",
@@ -335,13 +350,27 @@ export default function TeachersPage() {
       okType: "danger",
       cancelText: "Hủy",
       onOk: async () => {
+        // Optimistically remove from UI immediately
+        const prevTeachers = teachers;
+        setTeachers((prev) => prev.filter((t) => t.id !== teacherId));
+
         try {
+          console.log("Attempting to delete teacherId:", teacherId);
           await teacherService.deleteTeacher(teacherId);
           message.success("Xóa giáo viên thành công");
-          fetchTeachers();
         } catch (error) {
           console.error("Error deleting teacher:", error);
-          message.error("Có lỗi xảy ra khi xóa giáo viên");
+          // restore previous list (or re-fetch)
+          setTeachers(prevTeachers);
+
+          const errMsg = (error && error.message) || String(error);
+          message.error(`Không thể xóa giáo viên: ${errMsg}`);
+
+          if (errMsg.includes("Permission") || errMsg.includes("permission")) {
+            message.info(
+              "Lỗi quyền: kiểm tra rules của Firestore hoặc user hiện tại có cần quyền xóa không"
+            );
+          }
         }
       },
     });
@@ -359,6 +388,13 @@ export default function TeachersPage() {
       message.error("Có lỗi xảy ra khi tải lịch dạy");
     }
     setLoading(false);
+  };
+
+  // Wrapper to verify the click event reaches here
+  const handleDeleteClick = (teacherId, e) => {
+    e && e.stopPropagation && e.stopPropagation();
+    console.log("Delete button clicked for:", teacherId);
+    handleDeleteTeacher(teacherId);
   };
 
   const handleModalSubmit = async () => {
@@ -398,7 +434,18 @@ export default function TeachersPage() {
   };
 
   const getSubjectName = (subjectPath) => {
-    const subject = subjects.find((s) => s.path === subjectPath);
+    if (!subjectPath) return "Môn học không xác định";
+
+    // Try matching by full path first
+    let subject = subjects.find((s) => s.path === subjectPath);
+    if (subject) return subject.name;
+
+    // If a plain id was passed, match by id
+    const maybeId = subjectPath.includes("/")
+      ? subjectPath.split("/").pop()
+      : subjectPath;
+
+    subject = subjects.find((s) => s.id === maybeId || s.path === subjectPath);
     return subject ? subject.name : "Môn học không xác định";
   };
 
@@ -618,7 +665,8 @@ export default function TeachersPage() {
               onChange={handleFilterBySubject}
             >
               {subjects.map((subject) => (
-                <Select.Option key={subject.id} value={subject.id}>
+                // use full path so it matches teacher.subjectIds values (e.g. 'subjects/<id>')
+                <Select.Option key={subject.id} value={subject.path}>
                   <div
                     style={{
                       display: "flex",
@@ -770,7 +818,9 @@ export default function TeachersPage() {
                             </Tooltip>
                             <Tooltip title="Xóa">
                               <button
-                                onClick={() => handleDeleteTeacher(teacher.id)}
+                                onClick={(e) =>
+                                  handleDeleteClick(teacher.id, e)
+                                }
                                 style={{
                                   ...styles.actionButton,
                                   ...styles.deleteButton,
