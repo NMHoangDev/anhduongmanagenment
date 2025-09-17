@@ -16,6 +16,7 @@ import {
   query,
   where,
   getDocs,
+  addDoc,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
@@ -38,8 +39,12 @@ const usersCol = collection(db, "users");
 // Đăng nhập
 export const loginUser = async (email, password) => {
   try {
+    // Normalize email to avoid trailing spaces or case issues
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
     // tìm user doc theo email
-    const q = query(usersCol, where("email", "==", email));
+    const q = query(usersCol, where("email", "==", normalizedEmail));
     const snap = await getDocs(q);
     const userDoc = snap.docs[0];
 
@@ -74,7 +79,7 @@ export const loginUser = async (email, password) => {
     // Nếu tới đây: không có session hợp lệ -> phải xác thực bằng Firebase Auth
     const userCredential = await signInWithEmailAndPassword(
       auth,
-      email,
+      normalizedEmail,
       password
     );
     const user = userCredential.user;
@@ -129,6 +134,10 @@ export const loginUser = async (email, password) => {
       case "auth/wrong-password":
         errorMessage = "Mật khẩu không đúng";
         break;
+      case "auth/invalid-credential": // Firebase Web SDK v10+ common code for invalid email/password
+      case "auth/invalid-login-credentials":
+        errorMessage = "Email hoặc mật khẩu không đúng";
+        break;
       case "auth/invalid-email":
         errorMessage = "Email không hợp lệ";
         break;
@@ -171,39 +180,32 @@ export const registerUser = async (email, password, userData) => {
     );
     const user = userCredential.user;
 
-    const isTeacher = userData?.role === "teacher";
+    const role = userData?.role || "student";
     const token = createSessionToken();
     const expiry = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
 
-    // For teacher role: keep minimal fields in users collection, store detailed profile in teachers collection
-    const userDocData = isTeacher
-      ? {
-          uid: user.uid,
-          email: user.email,
-          name: userData.name || user.email.split("@")[0],
-          role: "teacher",
-          password, // lưu tạm (chú ý: chỉ dùng dev/test)
-          sessionToken: token,
-          sessionExpiry: expiry,
-          createdAt: new Date().toISOString(),
-          lastUpdated: new Date().toISOString(),
-          isActive: true,
-        }
-      : {
-          ...userData,
-          email: user.email,
-          uid: user.uid,
-          password, // lưu tạm (chú ý: chỉ dùng dev/test)
-          createdAt: new Date().toISOString(),
-          lastUpdated: new Date().toISOString(),
-          sessionExpiry: expiry,
-          sessionToken: token,
-          isActive: true,
-        };
+    // Prepare a minimal users doc common fields
+    const baseUserDoc = {
+      uid: user.uid,
+      email: user.email,
+      name: userData.name || user.email.split("@")[0],
+      role,
+      password, // lưu tạm (chú ý: chỉ dùng dev/test)
+      sessionToken: token,
+      sessionExpiry: expiry,
+      createdAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      isActive: true,
+    };
 
-    await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
+    let userDocData = { ...baseUserDoc };
 
-    if (isTeacher) {
+    // Special handling by role
+    if (role === "teacher") {
+      // Save minimal user doc
+      await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
+
+      // Create or update teachers/{uid}
       try {
         const teacherDocRef = doc(db, "teachers", user.uid);
         const teacherDocData = {
@@ -226,6 +228,43 @@ export const registerUser = async (email, password, userData) => {
       } catch (teacherError) {
         console.error("Lỗi khi tạo document giáo viên:", teacherError);
       }
+    } else if (role === "student") {
+      // Create students document with detailed student fields; store the student's document id in users.id
+      try {
+        const studentsCol = collection(db, "students");
+        const studentDocData = {
+          uid: user.uid,
+          authUid: user.uid,
+          name: userData.name || user.email.split("@")[0],
+          email: user.email,
+          avatar: userData.avatar || "",
+          classId: userData.class || userData.classId || "",
+          grade: userData.grade || "",
+          dob: userData.dateOfBirth || userData.dob || null,
+          gender: userData.gender || "",
+          parent: {
+            name: userData.parentName || "",
+            phoneNumber:
+              userData.parentPhone || userData.parentPhoneNumber || "",
+          },
+          createdAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+          isActive: true,
+        };
+
+        const studentRef = await addDoc(studentsCol, studentDocData);
+        // attach student document id to users doc as `id`
+        userDocData.id = studentRef.id;
+
+        await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
+      } catch (studentErr) {
+        console.error("Lỗi khi tạo document student:", studentErr);
+        // still persist base user doc even if student doc creation fails
+        await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
+      }
+    } else {
+      // default: save base user doc (for admin or other roles)
+      await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
     }
 
     // lưu token vào sessionStorage

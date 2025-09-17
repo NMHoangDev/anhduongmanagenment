@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { message } from "antd";
@@ -13,6 +13,9 @@ import {
   FaSignOutAlt,
   FaUserCheck,
   FaClock,
+  FaChevronLeft,
+  FaChevronRight,
+  FaTh,
 } from "react-icons/fa";
 
 const menu = [
@@ -47,6 +50,26 @@ export default function TeacherSidebar() {
   const navigate = useNavigate();
   const { currentUser, logout } = useAuth();
 
+  // responsive collapsed state
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return window.innerWidth < 900;
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const onResize = () => {
+      // auto collapse on small screens, expand on large
+      if (window.innerWidth < 900 && !collapsed) setCollapsed(true);
+      if (window.innerWidth >= 900 && collapsed) setCollapsed(false);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapsed]);
+
   const handleLogout = async () => {
     if (window.confirm("Bạn có chắc muốn đăng xuất?")) {
       try {
@@ -64,69 +87,163 @@ export default function TeacherSidebar() {
     }
   };
 
+  const sidebarWidth = collapsed ? 80 : 260;
+  const avatarSize = collapsed ? 32 : 36;
+
   return (
     <div
       style={{
-        width: 250,
-        background: "#fff",
+        width: sidebarWidth,
+        background: "linear-gradient(180deg, #2c3e50 0%, #34495e 100%)",
         minHeight: "100vh",
-        boxShadow: "2px 0 12px #0001",
         display: "flex",
         flexDirection: "column",
-        padding: "32px 0 0 0",
+        padding: "20px 12px",
         position: "sticky",
         top: 0,
+        transition: "width 300ms ease",
+        zIndex: 20,
+        borderRadius: collapsed ? "0 12px 12px 0" : "0 16px 16px 0",
+        boxShadow: "4px 0 20px rgba(0,0,0,0.1)",
       }}
     >
+      {/* Header with logo and toggle */}
       <div
         style={{
-          fontWeight: 700,
-          fontSize: 22,
-          color: "#1976d2",
-          textAlign: "center",
-          marginBottom: 32,
-          letterSpacing: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: collapsed ? "center" : "space-between",
+          marginBottom: 24,
+          padding: collapsed ? "8px 0" : "8px 12px",
         }}
       >
-        Giáo viên
-      </div>
-
-      {/* User Info */}
-      <div
-        style={{
-          padding: "16px 28px",
-          borderBottom: "1px solid #e0e0e0",
-          marginBottom: 16,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {/* Logo */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: collapsed ? 0 : 12,
+            color: "#ffffff",
+          }}
+        >
           <div
             style={{
-              width: 40,
-              height: 40,
-              background: "#1976d2",
+              width: avatarSize,
+              height: avatarSize,
+              background: "linear-gradient(135deg, #4CAF50 0%, #45a049 100%)",
               borderRadius: "50%",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               color: "white",
+              fontSize: collapsed ? 14 : 16,
               fontWeight: "bold",
-              fontSize: 16,
             }}
           >
-            <FaUser />
+            <FaTh />
           </div>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 14, color: "#333" }}>
-              {currentUser?.name || currentUser?.email || "Giáo viên"}
-            </div>
-            <div style={{ fontSize: 12, color: "#666" }}>Giáo viên</div>
-          </div>
+          {!collapsed && (
+            <span
+              style={{
+                fontSize: 16,
+                fontWeight: 600,
+                color: "#ffffff",
+              }}
+            >
+              Giáo viên
+            </span>
+          )}
         </div>
+
+        {/* Toggle button */}
+        {!collapsed && (
+          <button
+            aria-label="Thu gọn sidebar"
+            onClick={() => setCollapsed(true)}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: "50%",
+              border: "none",
+              background: "rgba(255,255,255,0.1)",
+              color: "#ffffff",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "background 0.2s",
+            }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.background = "rgba(255,255,255,0.2)")
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.background = "rgba(255,255,255,0.1)")
+            }
+          >
+            <FaChevronLeft size={12} />
+          </button>
+        )}
       </div>
 
+      {/* User Info */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: collapsed ? 0 : 12,
+          marginBottom: 24,
+          padding: collapsed ? "12px 0" : "16px 12px",
+          background: "rgba(255,255,255,0.05)",
+          borderRadius: collapsed ? "50%" : "12px",
+          justifyContent: collapsed ? "center" : "flex-start",
+        }}
+      >
+        <div
+          style={{
+            width: avatarSize,
+            height: avatarSize,
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            borderRadius: "50%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "white",
+            fontSize: 14,
+            fontWeight: "bold",
+          }}
+        >
+          <FaUser />
+        </div>
+        {!collapsed && (
+          <div style={{ flex: 1, overflow: "hidden" }}>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                color: "#ffffff",
+                marginBottom: 2,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {currentUser?.name || currentUser?.email || "Giáo viên"}
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+              Giáo viên
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Navigation Menu */}
       <nav
-        style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          gap: collapsed ? 8 : 4,
+        }}
       >
         {menu.map((item) => (
           <NavLink
@@ -135,54 +252,103 @@ export default function TeacherSidebar() {
             style={({ isActive }) => ({
               display: "flex",
               alignItems: "center",
-              gap: 16,
-              padding: "12px 28px",
-              fontWeight: 600,
-              fontSize: 16,
-              color: isActive ? "#1976d2" : "#444",
-              background: isActive ? "#e3eafe" : "transparent",
-              borderLeft: isActive
-                ? "4px solid #1976d2"
-                : "4px solid transparent",
+              gap: collapsed ? 0 : 16,
+              padding: collapsed ? "12px 0" : "12px 16px",
+              color: isActive ? "#ffffff" : "rgba(255,255,255,0.8)",
+              background: isActive ? "rgba(255,255,255,0.15)" : "transparent",
               textDecoration: "none",
-              borderRadius: "0 24px 24px 0",
-              transition: "background 0.2s, color 0.2s, border-left 0.2s",
+              borderRadius: collapsed ? "8px" : "12px",
+              transition: "all 0.2s ease",
+              fontSize: 14,
+              fontWeight: isActive ? 600 : 500,
+              justifyContent: collapsed ? "center" : "flex-start",
+              position: "relative",
+              overflow: "hidden",
             })}
-            end
+            onMouseEnter={(e) => {
+              if (!e.currentTarget.getAttribute("data-active")) {
+                e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!e.currentTarget.getAttribute("data-active")) {
+                e.currentTarget.style.background = "transparent";
+              }
+            }}
+            title={collapsed ? item.label : undefined}
           >
-            <span style={{ fontSize: 20 }}>{item.icon}</span>
-            {item.label}
+            <span style={{ fontSize: 16, minWidth: 16 }}>{item.icon}</span>
+            {!collapsed && (
+              <span style={{ whiteSpace: "nowrap" }}>{item.label}</span>
+            )}
           </NavLink>
         ))}
+      </nav>
 
-        {/* Logout Button */}
+      {/* Logout Button */}
+      <div style={{ marginTop: "auto", paddingTop: 16 }}>
         <button
           onClick={handleLogout}
           style={{
+            width: "100%",
             display: "flex",
             alignItems: "center",
-            gap: 16,
-            padding: "12px 28px",
-            fontWeight: 600,
-            fontSize: 16,
-            color: "#f44336",
+            gap: collapsed ? 0 : 16,
+            padding: collapsed ? "12px 0" : "12px 16px",
+            color: "rgba(255,255,255,0.9)",
             background: "transparent",
             border: "none",
             cursor: "pointer",
-            borderRadius: "0 24px 24px 0",
-            transition: "background 0.2s, color 0.2s",
-            marginTop: "auto",
-            marginBottom: 20,
+            borderRadius: collapsed ? "8px" : "12px",
+            transition: "all 0.2s ease",
+            fontSize: 14,
+            fontWeight: 500,
+            justifyContent: collapsed ? "center" : "flex-start",
           }}
-          onMouseEnter={(e) => (e.target.style.background = "#ffebee")}
-          onMouseLeave={(e) => (e.target.style.background = "transparent")}
+          onMouseEnter={(e) =>
+            (e.currentTarget.style.background = "rgba(231, 76, 60, 0.15)")
+          }
+          onMouseLeave={(e) =>
+            (e.currentTarget.style.background = "transparent")
+          }
+          title={collapsed ? "Đăng xuất" : undefined}
         >
-          <span style={{ fontSize: 20 }}>
+          <span style={{ fontSize: 16, minWidth: 16 }}>
             <FaSignOutAlt />
           </span>
-          Đăng xuất
+          {!collapsed && <span>Đăng xuất</span>}
         </button>
-      </nav>
+      </div>
+
+      {/* Expand button when collapsed */}
+      {collapsed && (
+        <button
+          aria-label="Mở rộng sidebar"
+          onClick={() => setCollapsed(false)}
+          style={{
+            width: "100%",
+            padding: "8px 0",
+            marginTop: 8,
+            background: "rgba(255,255,255,0.1)",
+            border: "none",
+            borderRadius: "8px",
+            color: "#ffffff",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "background 0.2s",
+          }}
+          onMouseEnter={(e) =>
+            (e.currentTarget.style.background = "rgba(255,255,255,0.2)")
+          }
+          onMouseLeave={(e) =>
+            (e.currentTarget.style.background = "rgba(255,255,255,0.1)")
+          }
+        >
+          <FaChevronRight size={12} />
+        </button>
+      )}
     </div>
   );
 }

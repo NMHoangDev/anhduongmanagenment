@@ -1,4 +1,32 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
+import {
+  Card,
+  Typography,
+  Button,
+  Modal,
+  Form,
+  Input,
+  List,
+  Tag,
+  message,
+  Select,
+  Empty,
+  Row,
+  Col,
+  Space,
+  Badge,
+  Segmented,
+  Tooltip,
+  Popover,
+} from "antd";
+import {
+  FaBell,
+  FaEllipsisV,
+  FaTrashAlt,
+  FaRegEnvelopeOpen,
+} from "react-icons/fa";
+
+const { Title, Text } = Typography;
 
 const fakeNotifications = [
   {
@@ -6,128 +34,283 @@ const fakeNotifications = [
     title: "Lịch họp giáo viên",
     content: "Họp toàn trường vào 14h ngày 25/5.",
     date: "2024-05-20",
+    read: false,
   },
   {
     id: 2,
     title: "Nhắc nhở nộp bài tập",
     content: "Hạn nộp bài tập Toán là 22/5.",
     date: "2024-05-18",
+    read: true,
   },
 ];
 
 export default function TeacherNotification() {
   const [notifications, setNotifications] = useState(fakeNotifications);
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
+  const [createVisible, setCreateVisible] = useState(false);
+  const [filter, setFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [form] = Form.useForm();
 
-  const handleSend = () => {
-    if (!title || !content) return;
-    setNotifications((prev) => [
-      {
-        id: prev.length + 1,
-        title,
-        content,
-        date: new Date().toISOString().slice(0, 10),
+  const unreadCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications]
+  );
+
+  const openCreate = () => setCreateVisible(true);
+
+  const handleMarkAllRead = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    message.success("Đã đánh dấu tất cả là đã đọc");
+  };
+
+  const handleCreate = async () => {
+    try {
+      const values = await form.validateFields();
+      const item = {
+        id: notifications.length + 1,
+        title: values.title,
+        content: values.content,
+        date: new Date().toLocaleDateString(),
+        read: false,
+        recipients: values.recipients || ["all"],
+      };
+      setNotifications((prev) => [item, ...prev]);
+      form.resetFields();
+      setCreateVisible(false);
+      message.success("Đã gửi thông báo");
+    } catch (err) {
+      // validation failed
+    }
+  };
+
+  const toggleRead = (id) => {
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read: !n.read } : n))
+    );
+  };
+
+  const filtered = useMemo(() => {
+    return notifications
+      .filter((n) => (filter === "unread" ? !n.read : true))
+      .filter(
+        (n) =>
+          n.title.toLowerCase().includes(query.toLowerCase()) ||
+          n.content.toLowerCase().includes(query.toLowerCase())
+      );
+  }, [notifications, filter, query]);
+
+  const handleDelete = (id) => {
+    Modal.confirm({
+      title: "Xác nhận xóa",
+      content: "Bạn có chắc muốn xóa thông báo này?",
+      okText: "Xóa",
+      okType: "danger",
+      onOk: () => {
+        setNotifications((prev) => prev.filter((n) => n.id !== id));
+        message.success("Đã xóa thông báo");
       },
-      ...prev,
-    ]);
-    setTitle("");
-    setContent("");
+    });
   };
 
   return (
-    <div style={{ padding: 40, minHeight: "100vh", background: "#f6f6fa" }}>
-      <h1 style={{ fontWeight: 700, fontSize: 28, marginBottom: 18 }}>
-        Thông báo
-      </h1>
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 12,
-          boxShadow: "0 2px 8px #eee",
-          padding: 24,
-          marginBottom: 32,
-        }}
+    <div
+      style={{
+        background: "linear-gradient(135deg, #f6f9fc 0%, #eef2ff 100%)",
+        minHeight: "100vh",
+        padding: 24,
+      }}
+    >
+      <Card
+        style={{ marginBottom: 18, borderRadius: 12 }}
+        bodyStyle={{ padding: 12 }}
       >
-        <div style={{ fontWeight: 600, fontSize: 18, marginBottom: 12 }}>
-          Gửi thông báo mới
-        </div>
-        <input
-          type="text"
-          placeholder="Tiêu đề"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          style={{
-            width: "100%",
-            borderRadius: 8,
-            border: "1px solid #ccc",
-            padding: 10,
-            fontSize: 16,
-            marginBottom: 12,
-          }}
-        />
-        <textarea
-          placeholder="Nội dung thông báo"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          style={{
-            width: "100%",
-            borderRadius: 8,
-            border: "1px solid #ccc",
-            padding: 10,
-            fontSize: 16,
-            marginBottom: 12,
-            minHeight: 60,
-          }}
-        />
-        <button
-          onClick={handleSend}
-          style={{
-            background: "#1976d2",
-            color: "#fff",
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 32px",
-            fontWeight: 700,
-            fontSize: 16,
-            cursor: "pointer",
-          }}
-        >
-          Gửi thông báo
-        </button>
-      </div>
-      <div>
-        <h2 style={{ fontWeight: 600, fontSize: 20, marginBottom: 12 }}>
-          Thông báo gần đây
-        </h2>
-        <table
-          style={{
-            width: "100%",
-            background: "#fff",
-            borderRadius: 12,
-            overflow: "hidden",
-            boxShadow: "0 2px 8px #eee",
-            borderCollapse: "collapse",
-          }}
-        >
-          <thead style={{ background: "#f3f6fd" }}>
-            <tr>
-              <th style={{ padding: 12, textAlign: "left" }}>Tiêu đề</th>
-              <th style={{ padding: 12, textAlign: "left" }}>Nội dung</th>
-              <th style={{ padding: 12, textAlign: "left" }}>Ngày gửi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {notifications.map((n) => (
-              <tr key={n.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                <td style={{ padding: 10 }}>{n.title}</td>
-                <td style={{ padding: 10 }}>{n.content}</td>
-                <td style={{ padding: 10 }}>{n.date}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        <Row align="middle" justify="space-between">
+          <Col>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Badge count={unreadCount} size="small" offset={[6, 6]}>
+                <div
+                  style={{
+                    background: "linear-gradient(90deg, #eef2ff, #e9f5ff)",
+                    padding: 10,
+                    borderRadius: 10,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <FaBell style={{ color: "#4066f5", fontSize: 18 }} />
+                </div>
+              </Badge>
+              <div>
+                <Title level={4} style={{ margin: 0 }}>
+                  Thông báo
+                </Title>
+                <Text type="secondary">
+                  Quản lý thông báo gửi tới học sinh, phụ huynh và giáo viên.
+                </Text>
+              </div>
+            </div>
+          </Col>
+
+          <Col>
+            <Space align="center" style={{ gap: 8 }}>
+              <Input.Search
+                placeholder="Tìm tiêu đề hoặc nội dung"
+                allowClear
+                onSearch={(v) => setQuery(v)}
+                style={{ width: 320 }}
+              />
+
+              <Segmented
+                value={filter}
+                onChange={(v) => setFilter(v)}
+                options={[
+                  { label: "Tất cả", value: "all" },
+                  { label: "Chưa đọc", value: "unread" },
+                ]}
+              />
+
+              <Tooltip title="Đánh dấu tất cả là đã đọc">
+                <Button onClick={handleMarkAllRead}>Đánh dấu đã đọc</Button>
+              </Tooltip>
+
+              <Button type="primary" onClick={openCreate}>
+                Tạo
+              </Button>
+            </Space>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card style={{ borderRadius: 12 }} bodyStyle={{ padding: 16 }}>
+        {filtered.length === 0 ? (
+          <Empty description="Không có thông báo" />
+        ) : (
+          <List
+            dataSource={filtered}
+            itemLayout="horizontal"
+            renderItem={(item) => (
+              <List.Item
+                key={item.id}
+                style={{
+                  background: item.read ? "#fff" : "#fffaf0",
+                  borderRadius: 10,
+                  marginBottom: 12,
+                  padding: 14,
+                  boxShadow: "0 1px 2px rgba(16,24,40,0.04)",
+                }}
+                actions={[
+                  <Button
+                    key="read"
+                    type="link"
+                    onClick={() => toggleRead(item.id)}
+                  >
+                    {item.read ? "Đánh dấu chưa đọc" : "Đánh dấu đã đọc"}
+                  </Button>,
+                  <Popover
+                    key="more"
+                    placement="bottomRight"
+                    content={
+                      <div style={{ display: "flex", flexDirection: "column" }}>
+                        <Button
+                          type="text"
+                          icon={<FaRegEnvelopeOpen />}
+                          onClick={() => message.info("Gửi lại (demo)")}
+                        >
+                          Gửi lại
+                        </Button>
+                        <Button
+                          type="text"
+                          icon={<FaTrashAlt />}
+                          danger
+                          onClick={() => handleDelete(item.id)}
+                        >
+                          Xóa
+                        </Button>
+                      </div>
+                    }
+                  >
+                    <Button icon={<FaEllipsisV />} />
+                  </Popover>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 12,
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text strong style={{ fontSize: 16 }}>
+                          {item.title}
+                        </Text>
+                        {!item.read && <Tag color="red">Mới</Tag>}
+                      </div>
+                      <div style={{ color: "#888", fontSize: 12 }}>
+                        {item.date}
+                      </div>
+                    </div>
+                  }
+                  description={
+                    <div style={{ marginTop: 8, color: "#444" }}>
+                      {item.content}
+                    </div>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </Card>
+
+      <Modal
+        title={
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <FaBell /> Tạo thông báo mới
+          </div>
+        }
+        open={createVisible}
+        onOk={handleCreate}
+        onCancel={() => setCreateVisible(false)}
+        okText="Gửi"
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item
+            name="title"
+            label="Tiêu đề"
+            rules={[{ required: true, message: "Vui lòng nhập tiêu đề" }]}
+          >
+            <Input placeholder="Tiêu đề thông báo" />
+          </Form.Item>
+
+          <Form.Item
+            name="content"
+            label="Nội dung"
+            rules={[{ required: true, message: "Vui lòng nhập nội dung" }]}
+          >
+            <Input.TextArea rows={4} placeholder="Nội dung thông báo" />
+          </Form.Item>
+
+          <Form.Item name="recipients" label="Gửi tới" initialValue={["all"]}>
+            <Select mode="multiple" placeholder="Chọn đối tượng nhận">
+              <Select.Option value="all">Tất cả học sinh</Select.Option>
+              <Select.Option value="class_1">Lớp 1</Select.Option>
+              <Select.Option value="class_2">Lớp 2</Select.Option>
+              <Select.Option value="parents">Phụ huynh</Select.Option>
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

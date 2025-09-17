@@ -31,6 +31,13 @@ import Classes from "./pages/Classes";
 import Parents from "./pages/Parents";
 import "./App.css";
 import ExpenseManagement from "./pages/ExpensePage";
+import ProfileStudent from "./pages/student/ProfileStudentPage";
+import TimetableStudent from "./pages/student/TimetableStudent";
+import NotificationsPage from "./pages/student/NotificationsPage";
+import LearningPathPage from "./pages/student/LearningPathPage";
+import ContactBookPage from "./pages/student/ContactBookPage";
+import MaterialsPage from "./pages/student/MaterialsPage";
+import RatingPage from "./pages/student/RatingPage";
 
 function App() {
   return (
@@ -275,6 +282,88 @@ function App() {
             element={
               <ProtectedRoute teacherOnly>
                 <TeacherProfile />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Student routes */}
+          <Route
+            path="/student/dashboard"
+            element={
+              <ProtectedRoute studentOnly>
+                <ProfileStudent />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/student/profile"
+            element={
+              <ProtectedRoute studentOnly>
+                <ProfileStudent />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/student/timetable"
+            element={
+              <ProtectedRoute studentOnly>
+                <TimetableStudent />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/student/notifications"
+            element={
+              <ProtectedRoute studentOnly>
+                <NotificationsPage />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/student/learning-path"
+            element={
+              <ProtectedRoute studentOnly>
+                <LearningPathPage />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/student/contact-book"
+            element={
+              <ProtectedRoute studentOnly>
+                <ContactBookPage />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/student/materials"
+            element={
+              <ProtectedRoute studentOnly>
+                <MaterialsPage />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/student/badges"
+            element={
+              <ProtectedRoute studentOnly>
+                <RatingPage />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/student"
+            element={
+              <ProtectedRoute studentOnly>
+                <ProfileStudent />
               </ProtectedRoute>
             }
           />

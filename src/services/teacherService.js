@@ -15,6 +15,44 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 
+// Helper: normalize teacher document data to a predictable shape
+const normalizeTeacherData = (docSnapshot) => {
+  const data = docSnapshot.data() || {};
+  // gradeLevel can be stored as map/object like {0: "3"} or a simple string/number
+  let gradeLevel = null;
+  if (data.gradeLevel) {
+    if (typeof data.gradeLevel === "object") {
+      // pick first value
+      const vals = Object.values(data.gradeLevel);
+      gradeLevel = vals.length > 0 ? vals[0] : null;
+    } else {
+      gradeLevel = data.gradeLevel;
+    }
+  }
+
+  // subjectIds might be stored as array of full paths (e.g. "subjects/test1")
+  const subjectIds = Array.isArray(data.subjectIds) ? data.subjectIds : [];
+
+  return {
+    id: docSnapshot.id,
+    name: data.name || "",
+    email: data.email || "",
+    phone: data.phone || "",
+    avatar: data.avatar || "",
+    address: data.address || "",
+    experience: data.experience || data.teachingExperience || "",
+    teachingExperience: data.teachingExperience || data.experience || "",
+    qualifications: data.qualifications || "",
+    rating: data.rating ?? 0,
+    status: data.status || "",
+    uid: data.uid || data.authUid || "",
+    facilityId: data.facilityId || null,
+    gradeLevel,
+    subjectIds,
+    raw: data,
+  };
+};
+
 /**
  * Tìm teacher ID thực từ Firebase Auth UID hoặc tên
  * @param {string} authUid - Firebase Auth UID
@@ -304,14 +342,43 @@ export const removeSubjectFromTeacher = async (teacherId, subjectId) => {
  */
 export const deleteTeacher = async (teacherId) => {
   const teacherRef = doc(db, "teachers", teacherId);
-  await deleteDoc(teacherRef);
+  try {
+    // Read snapshot before delete for debugging
+    try {
+      const before = await getDoc(teacherRef);
+      console.log(`deleteTeacher: before delete exists=${before.exists()}`, {
+        id: teacherId,
+        data: before.exists() ? before.data() : null,
+      });
+    } catch (readErr) {
+      console.warn("deleteTeacher: failed to read before-snapshot:", readErr);
+    }
 
-  // Xóa các lịch dạy của giáo viên (nếu có)
-  const scheduleCollection = collection(db, `teachers/${teacherId}/schedule`);
-  const schedules = await getDocs(scheduleCollection);
+    console.log("deleteTeacher: attempting deleteDoc for", teacherId);
+    await deleteDoc(teacherRef);
 
-  for (const scheduleDoc of schedules.docs) {
-    await deleteDoc(scheduleDoc.ref);
+    // verify deletion — if permissions prevented delete this will still exist
+    const verifySnap = await getDoc(teacherRef);
+    console.log(
+      `deleteTeacher: verify after delete exists=${verifySnap.exists()}`,
+      { id: teacherId }
+    );
+    if (verifySnap.exists()) {
+      throw new Error(
+        `Delete did not remove document ${teacherId} — possible permission or backend issue`
+      );
+    }
+
+    // Xóa các lịch dạy của giáo viên (nếu có)
+    const scheduleCollection = collection(db, `teachers/${teacherId}/schedule`);
+    const schedules = await getDocs(scheduleCollection);
+
+    for (const scheduleDoc of schedules.docs) {
+      await deleteDoc(scheduleDoc.ref);
+    }
+  } catch (err) {
+    console.error("deleteTeacher failed:", err);
+    throw err;
   }
 };
 
@@ -696,4 +763,44 @@ export const getClassById = async (classId) => {
     return { id: classId, ...classSnap.data() };
   }
   return null;
+};
+
+/**
+ * Lấy teacher (normalized) bởi doc id
+ * @param {string} teacherDocId
+ */
+export const getTeacherByDocId = async (teacherDocId) => {
+  const ref = doc(db, "teachers", teacherDocId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  return normalizeTeacherData(snap);
+};
+
+/**
+ * Lấy teacher (normalized) bởi Firebase Auth UID (uid field)
+ * Trả về null nếu không tìm thấy
+ * @param {string} authUid
+ */
+export const getTeacherByUid = async (authUid) => {
+  if (!authUid) return null;
+  const teachersCollection = collection(db, "teachers");
+  const q = query(teachersCollection, where("uid", "==", authUid));
+  const snap = await getDocs(q);
+  if (!snap.empty) {
+    return normalizeTeacherData(snap.docs[0]);
+  }
+
+  // fallback: try field authUid or uid in nested raw fields
+  const q2 = query(teachersCollection, where("authUid", "==", authUid));
+  const snap2 = await getDocs(q2);
+  if (!snap2.empty) return normalizeTeacherData(snap2.docs[0]);
+
+  // last resort: scan all teachers and match uid in raw object
+  const all = await getTeachers();
+  const found = all.find(
+    (t) =>
+      t.uid === authUid ||
+      (t.raw && (t.raw.uid === authUid || t.raw.authUid === authUid))
+  );
+  return found || null;
 };

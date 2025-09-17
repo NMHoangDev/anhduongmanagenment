@@ -4,12 +4,14 @@ import { useAuth } from "../context/AuthContext";
 import { Spin } from "antd";
 import Layout from "./Layout";
 import TeacherLayout from "./TeacherLayout";
+import StudentLayout from "./StudentLayout";
 
 const ProtectedRoute = ({
   children,
   requiredRole = null,
   adminOnly = false,
   teacherOnly = false,
+  studentOnly = false,
 }) => {
   const { currentUser, isAuthenticated, loading } = useAuth();
   const location = useLocation();
@@ -38,19 +40,17 @@ const ProtectedRoute = ({
 
   // Chưa đăng nhập -> chuyển đến trang login
   if (!isAuthenticated) {
-    console.log("Người dùng chưa đăng nhập, chuyển hướng đến /login");
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   // Đã đăng nhập nhưng chưa có thông tin role
   if (!currentUser?.role) {
-    console.log("Không tìm thấy thông tin role, chuyển hướng đến /login");
     return <Navigate to="/login" replace />;
   }
 
   // Kiểm tra quyền admin
   if (adminOnly && currentUser.role !== "admin") {
-    console.log("Không có quyền admin, chuyển hướng đến trang phù hợp");
+    // redirect users without admin role
     const defaultRoute = getDefaultRouteByRole(currentUser.role);
     return <Navigate to={defaultRoute} replace />;
   }
@@ -61,7 +61,16 @@ const ProtectedRoute = ({
     currentUser.role !== "teacher" &&
     currentUser.role !== "admin"
   ) {
-    console.log("Không có quyền teacher, chuyển hướng đến trang phù hợp");
+    // redirect users who are not teacher or admin
+    const defaultRoute = getDefaultRouteByRole(currentUser.role);
+    return <Navigate to={defaultRoute} replace />;
+  }
+
+  if (
+    studentOnly &&
+    currentUser.role !== "student" &&
+    currentUser.role !== "admin"
+  ) {
     const defaultRoute = getDefaultRouteByRole(currentUser.role);
     return <Navigate to={defaultRoute} replace />;
   }
@@ -72,20 +81,19 @@ const ProtectedRoute = ({
     currentUser.role !== requiredRole &&
     currentUser.role !== "admin"
   ) {
-    console.log(
-      `Không có quyền ${requiredRole}, chuyển hướng đến trang phù hợp`
-    );
     const defaultRoute = getDefaultRouteByRole(currentUser.role);
     return <Navigate to={defaultRoute} replace />;
   }
 
-  console.log(
-    `Cho phép truy cập: ${location.pathname} với role: ${currentUser.role}`
-  );
+  // allowed. choose layout based on path
 
   // Sử dụng layout phù hợp dựa trên route
   if (location.pathname.startsWith("/teacher/")) {
     return <TeacherLayout>{children}</TeacherLayout>;
+  }
+
+  if (location.pathname.startsWith("/student/")) {
+    return <StudentLayout>{children}</StudentLayout>;
   }
 
   return <Layout>{children}</Layout>;
