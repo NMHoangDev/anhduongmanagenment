@@ -26,9 +26,9 @@ import {
   markBulkStudentAttendance,
   getStudentAttendanceByDate,
   getClassAttendanceOverview,
-} from "../../service/attendanceService";
-import { getAllStudents } from "../../services/studentService";
-import { getAllClasses } from "../../services/classesService";
+  getHomeRoomClasses,
+  getHomeRoomStudentsForAttendance,
+} from "../../services/teacherServices/attendanceService";
 import { useAuth } from "../../context/AuthContext";
 import dayjs from "dayjs";
 
@@ -58,77 +58,61 @@ export default function StudentAttendance() {
     },
   ];
 
+  // fetch homeroom classes for current teacher (GVCN)
   const fetchClasses = useCallback(async () => {
     try {
-      const classData = await getAllClasses();
+      if (!currentUser?.uid) return;
+      const classData = await getHomeRoomClasses(currentUser.uid);
       setClasses(classData);
     } catch (error) {
       console.error("Error fetching classes:", error);
       message.error("Không thể tải danh sách lớp");
     }
-  }, []);
+  }, [currentUser]);
 
-  const fetchStudentsInClass = useCallback(async () => {
+  // fetch students + their attendance for selected class and date
+  const fetchStudentsForAttendance = useCallback(async () => {
     try {
+      if (!selectedClass || !currentUser?.uid) {
+        setStudents([]);
+        setAttendanceData([]);
+        return;
+      }
       setLoading(true);
-      const studentData = await getAllStudents();
-      // Filter students by selected class
-      const classStudents = studentData.filter(
-        (student) => student.classId === selectedClass
-      );
-      setStudents(classStudents);
-    } catch (error) {
-      console.error("Error fetching students:", error);
-      message.error("Không thể tải danh sách học sinh");
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedClass]);
-
-  const fetchAttendanceData = useCallback(async () => {
-    try {
       const dateString = selectedDate.format("YYYY-MM-DD");
-      const attendance = await getStudentAttendanceByDate(
+      const res = await getHomeRoomStudentsForAttendance(
         selectedClass,
+        currentUser.uid,
         dateString
       );
+      const fetchedStudents = res?.students || [];
+      setStudents(fetchedStudents);
 
-      // Create attendance map
-      const attendanceMap = {};
-      attendance.forEach((record) => {
-        attendanceMap[record.studentId] = record;
-      });
-
-      // Merge with student data
-      const attendanceWithStudents = students.map((student) => ({
-        ...student,
-        attendance: attendanceMap[student.id] || null,
-        status: attendanceMap[student.id]?.status || "unmarked",
-        note: attendanceMap[student.id]?.note || "",
+      // Map to UI attendanceData shape
+      const attendanceWithStudents = fetchedStudents.map((s) => ({
+        ...s,
+        // ensure status & note exist for UI
+        status: s.status || "unmarked",
+        note: s.attendance?.note || "",
       }));
 
       setAttendanceData(attendanceWithStudents);
     } catch (error) {
-      console.error("Error fetching attendance:", error);
-      message.error("Không thể tải dữ liệu điểm danh");
+      console.error("Error fetching students for attendance:", error);
+      message.error("Không thể tải danh sách học sinh / điểm danh");
+    } finally {
+      setLoading(false);
     }
-  }, [selectedClass, selectedDate, students]);
+  }, [selectedClass, selectedDate, currentUser]);
 
   useEffect(() => {
     fetchClasses();
   }, [fetchClasses]);
 
   useEffect(() => {
-    if (selectedClass) {
-      fetchStudentsInClass();
-    }
-  }, [selectedClass, fetchStudentsInClass]);
-
-  useEffect(() => {
-    if (selectedClass && students.length > 0) {
-      fetchAttendanceData();
-    }
-  }, [selectedClass, selectedDate, students.length, fetchAttendanceData]);
+    fetchStudentsForAttendance();
+    // run when class or date changes
+  }, [selectedClass, selectedDate, fetchStudentsForAttendance]);
 
   const handleAttendanceChange = (studentId, status, note = "") => {
     setAttendanceData((prev) =>
@@ -149,7 +133,7 @@ export default function StudentAttendance() {
       );
 
       message.success("Điểm danh thành công");
-      fetchAttendanceData(); // Refresh data
+      await fetchStudentsForAttendance(); // Refresh data
     } catch (error) {
       console.error("Error marking attendance:", error);
       message.error("Lỗi khi điểm danh");
@@ -181,7 +165,7 @@ export default function StudentAttendance() {
       message.success(
         `Điểm danh thành công cho ${attendanceList.length} học sinh`
       );
-      fetchAttendanceData();
+      await fetchStudentsForAttendance();
     } catch (error) {
       console.error("Error bulk attendance:", error);
       message.error("Lỗi khi điểm danh hàng loạt");
@@ -198,12 +182,15 @@ export default function StudentAttendance() {
 
   const fetchClassStats = async () => {
     try {
+      if (!selectedClass) return;
       const month = selectedDate.month() + 1;
       const year = selectedDate.year();
+      // pass teacherId to ensure permission check on backend
       const stats = await getClassAttendanceOverview(
         selectedClass,
         month,
-        year
+        year,
+        currentUser.uid
       );
       setClassStats(stats);
       setStatsVisible(true);
@@ -248,7 +235,7 @@ export default function StudentAttendance() {
                 fontWeight: "bold",
               }}
             >
-              {text.charAt(0)}
+              {text?.charAt(0) || ""}
             </div>
           )}
           <div>
@@ -330,7 +317,7 @@ export default function StudentAttendance() {
   const getStatusStats = () => {
     const stats = { present: 0, absent: 0, late: 0, excused: 0, unmarked: 0 };
     attendanceData.forEach((item) => {
-      stats[item.status]++;
+      stats[item.status] = (stats[item.status] || 0) + 1;
     });
     return stats;
   };
@@ -386,7 +373,7 @@ export default function StudentAttendance() {
             </label>
             <DatePicker
               value={selectedDate}
-              onChange={setSelectedDate}
+              onChange={(d) => setSelectedDate(d || dayjs())}
               format="DD/MM/YYYY"
               style={{ width: "100%" }}
             />

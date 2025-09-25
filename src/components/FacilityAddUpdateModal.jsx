@@ -9,7 +9,7 @@ import {
   Row,
   Col,
 } from "antd";
-import * as facilitiesService from "../services/facilitiesService"; // <- use facilitiesService
+import * as facilitiesService from "../services/adminServices/facilitiesService"; // <- use facilitiesService
 
 const { TextArea } = Input;
 

@@ -10,7 +10,7 @@ import {
   updateDoc,
   Timestamp,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db } from "../firebase";
 
 /** Helpers */
 const toMonthRangeUTC = (monthStr, tzOffsetMinutes = 0) => {

@@ -13,7 +13,7 @@ import {
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import SubjectDetailModal from "../components/SubjectDetailModal";
-import * as subjectService from "../services/subjectService";
+import * as subjectService from "../services/adminServices/subjectService";
 import {
   message,
   Modal,

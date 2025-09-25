@@ -1,5 +1,5 @@
 import { doc, updateDoc, getDoc } from "firebase/firestore";
-import { db } from "./firebase";
+import { db } from "../firebase";
 
 /**
  * Update teacher profile and keep users collection in sync.

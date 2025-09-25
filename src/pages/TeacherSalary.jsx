@@ -19,7 +19,7 @@ import {
   getMonthlyPayroll,
   markPayrollAsPaid,
   getUnpaidPayrolls,
-} from "../services/teacherSalaryService";
+} from "../services/adminServices/teacherSalaryService";
 
 // Hàm tạo dữ liệu giáo viên cơ bản (status sẽ được sync với payroll service)
 const generateTeacherData = (teacher) => ({

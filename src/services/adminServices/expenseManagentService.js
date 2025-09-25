@@ -16,7 +16,7 @@ import {
   startOfMonth,
   endOfMonth,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db } from "../firebase";
 import * as facilitiesService from "./facilitiesService";
 import * as teacherSalaryService from "./teacherSalaryService";
 

@@ -25,7 +25,7 @@ import {
   getRevenueExpenseChart,
   getStudentsByGrade,
   getStudentsByStatus,
-} from "../services/expenseManagentService";
+} from "../services/adminServices/expenseManagentService";
 
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#e83e8c"];
 

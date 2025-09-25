@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Modal, Select, message } from "antd";
-import * as teacherService from "../services/teacherService";
+import * as teacherService from "../services/adminServices/teacherService";
 
 const { Option } = Select;
 

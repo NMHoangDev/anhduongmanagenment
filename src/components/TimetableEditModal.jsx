@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Modal, Form, Input, Select, Button, Space, message, Card } from "antd";
 import { FaBook, FaUser, FaHome, FaStickyNote, FaClock } from "react-icons/fa";
-import * as teacherService from "../services/teacherService";
-import * as subjectService from "../services/subjectService";
+import * as teacherService from "../services/adminServices/teacherService";
+import * as subjectService from "../services/adminServices/subjectService";
 
 const { Option } = Select;
 const { TextArea } = Input;

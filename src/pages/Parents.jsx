@@ -13,7 +13,7 @@ import {
   getAllParents,
   updateParent,
   deleteParent,
-} from "../services/parentService";
+} from "../services/adminServices/parentService";
 import {
   FaPlus,
   FaEdit,

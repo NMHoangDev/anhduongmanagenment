@@ -34,8 +34,8 @@ import {
   getTeacherTodayStatus,
   getTeacherAttendanceByDateRange,
   getTeacherAttendanceStats,
-} from "../../services/attendanceService";
-import { findTeacherIdByAuthUid } from "../../services/teacherService";
+} from "../../services/teacherServices/attendanceService";
+import { findTeacherIdByAuthUid } from "../../services/adminServices/teacherService";
 import { useAuth } from "../../context/AuthContext";
 import dayjs from "dayjs";
 

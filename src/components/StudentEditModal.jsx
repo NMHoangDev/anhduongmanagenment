@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import * as classesService from "../services/classesService";
+import * as classesService from "../services/adminServices/classesService";
 
 // Reusing styles from TimetableEditModal for consistency
 const modalOverlayStyle = {

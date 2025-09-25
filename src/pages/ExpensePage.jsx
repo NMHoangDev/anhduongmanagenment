@@ -17,9 +17,9 @@ import {
   listExpenses,
   getExpenseById,
   computeAutoAmount,
-} from "../services/expenseManagentService";
-import * as facilitiesService from "../services/facilitiesService";
-import * as teacherService from "../services/teacherService";
+} from "../services/adminServices/expenseManagentService";
+import * as facilitiesService from "../services/adminServices/facilitiesService";
+import * as teacherService from "../services/adminServices/teacherService";
 import {
   message,
   Modal,

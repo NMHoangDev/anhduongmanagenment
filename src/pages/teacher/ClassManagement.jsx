@@ -42,95 +42,26 @@ import {
 } from "react-icons/fa";
 import dayjs from "dayjs";
 import { useAuth } from "../../context/AuthContext";
+// Thêm import này vào đầu file
+import {
+  sendClassNotification,
+  sendMessageToStudent as sendMessageToStudentService,
+  sendClassReminder,
+  sendStudentReward,
+  getClassNotifications,
+  getClassReminders,
+  getStudentRewards,
+  getTeacherHomeRoomClasses,
+} from "../../services/teacherServices/classManagementService";
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
 const { TabPane } = Tabs;
 
-// Mock data - replace with real API calls
-const mockClasses = [
-  {
-    id: "1A",
-    name: "Lớp 1A",
-    grade: "Lớp 1",
-    totalStudents: 30,
-    presentToday: 28,
-    averageGrade: 8.5,
-    students: [
-      {
-        id: "HS01",
-        name: "Nguyễn Văn An",
-        avatar: null,
-        attendance: 95,
-        grade: 8.5,
-        behavior: "good",
-        phone: "0123456789",
-        parentPhone: "0987654321",
-      },
-      {
-        id: "HS02",
-        name: "Trần Thị Bích",
-        avatar: null,
-        attendance: 92,
-        grade: 9.0,
-        behavior: "excellent",
-        phone: "0123456788",
-        parentPhone: "0987654322",
-      },
-      {
-        id: "HS03",
-        name: "Lê Minh Tuấn",
-        avatar: null,
-        attendance: 88,
-        grade: 7.5,
-        behavior: "average",
-        phone: "0123456787",
-        parentPhone: "0987654323",
-      },
-    ],
-    announcements: [
-      {
-        id: 1,
-        title: "Thông báo nghỉ học",
-        content: "Lớp nghỉ học vào thứ 6 tuần này",
-        date: "2025-09-14",
-        type: "important",
-        read: 25,
-      },
-    ],
-    schedule: [
-      { day: "Thứ 2", periods: ["Toán", "Văn", "Anh", "Thể dục"] },
-      { day: "Thứ 3", periods: ["Văn", "Toán", "Khoa học", "Âm nhạc"] },
-    ],
-  },
-  {
-    id: "2A",
-    name: "Lớp 2A",
-    grade: "Lớp 2",
-    totalStudents: 32,
-    presentToday: 30,
-    averageGrade: 8.2,
-    students: [
-      {
-        id: "HS04",
-        name: "Phạm Thị Hoa",
-        avatar: null,
-        attendance: 97,
-        grade: 8.8,
-        behavior: "excellent",
-        phone: "0123456786",
-        parentPhone: "0987654324",
-      },
-    ],
-    announcements: [],
-    schedule: [],
-  },
-];
-
 export default function ClassManagement() {
-  const [classes] = useState(mockClasses);
-  const [selectedClassId, setSelectedClassId] = useState(classes[0]?.id);
+  const [classes, setClasses] = useState([]);
+  const [selectedClassId, setSelectedClassId] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [messageModal, setMessageModal] = useState(false);
   // const [studentModal, setStudentModal] = useState(false);
@@ -152,6 +83,57 @@ export default function ClassManagement() {
   const [badgeModal, setBadgeModal] = useState(false);
   const [selectedBadgeStudent, setSelectedBadgeStudent] = useState(null);
   const [badgeForm] = Form.useForm();
+  // Thêm vào phần state declarations
+  const [notifications, setNotifications] = useState([]);
+  const [reminders, setReminders] = useState([]);
+  const [studentRewards, setStudentRewards] = useState([]);
+  const [loading, setLoading] = useState(false);
+  // Thêm các function này vào component
+  const fetchClassNotifications = async (classId) => {
+    try {
+      const data = await getClassNotifications(classId);
+      setNotifications(data);
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+      message.error("Không thể tải danh sách thông báo");
+    }
+  };
+
+  const fetchClassReminders = async (classId) => {
+    try {
+      const data = await getClassReminders(classId);
+      setReminders(data);
+    } catch (error) {
+      console.error("Error fetching reminders:", error);
+      message.error("Không thể tải danh sách nhắc nhở");
+    }
+  };
+
+  const fetchStudentRewards = async (studentId) => {
+    try {
+      const data = await getStudentRewards(studentId);
+      return data;
+    } catch (error) {
+      console.error("Error fetching student rewards:", error);
+      return [];
+    }
+  };
+
+  // fetch homeroom classes for current teacher
+  const fetchHomeRoomClasses = async () => {
+    try {
+      if (!currentUser?.uid) return;
+      const cls = await getTeacherHomeRoomClasses(currentUser.uid);
+      setClasses(cls);
+      // if no selected class, set first
+      if (!selectedClassId && cls.length > 0) {
+        setSelectedClassId(cls[0].id);
+      }
+    } catch (err) {
+      console.error("Error fetching home room classes:", err);
+      message.error("Không thể tải lớp chủ nhiệm");
+    }
+  };
 
   const currentClass = classes.find((cls) => cls.id === selectedClassId);
 
@@ -311,7 +293,7 @@ export default function ClassManagement() {
               size="small"
               icon={<FaEnvelope />}
               style={{ borderRadius: "6px" }}
-              onClick={() => sendMessageToStudent(record)}
+              onClick={() => openMessageModal(record)}
             />
           </Tooltip>
           <Tooltip title="Trao huy hiệu">
@@ -412,33 +394,71 @@ export default function ClassManagement() {
     });
   };
 
-  const sendMessageToStudent = (student) => {
+  const openMessageModal = (student) => {
     setSelectedStudents([student]);
     setMessageModal(true);
   };
 
   const handleSendMessage = async (values) => {
     try {
-      // API call to send message
+      setLoading(true);
+
+      // Gửi tin nhắn cho từng học sinh được chọn
+      const sendPromises = selectedStudents.map((student) =>
+        sendMessageToStudentService(student.id, {
+          content: values.message,
+          senderId: currentUser?.uid || currentUser?.id || "unknown",
+          subject: values.subject || "Tin nhắn từ giáo viên chủ nhiệm",
+          attachments: values.attachments || [],
+        })
+      );
+
+      await Promise.all(sendPromises);
+
       message.success(
-        `Đã gửi tin nhắn đến ${selectedStudents.length} học sinh`
+        `Đã gửi tin nhắn đến ${selectedStudents.length} học sinh!`
       );
       setMessageModal(false);
       form.resetFields();
       setSelectedStudents([]);
     } catch (error) {
-      message.error("Lỗi khi gửi tin nhắn");
+      console.error("Error sending messages:", error);
+      message.error(
+        "Lỗi khi gửi tin nhắn: " + (error.message || "Không xác định")
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleSendAnnouncement = async (values) => {
     try {
-      // API call to send announcement
-      message.success("Đã gửi thông báo thành công");
+      setLoading(true);
+
+      // ensure teacherId passed first (permission checked in service)
+      await sendClassNotification(currentUser?.uid, selectedClassId, {
+        title: values.title,
+        content: values.content,
+        senderId: currentUser?.uid || currentUser?.id || "unknown",
+        type: values.important ? "important" : "normal",
+        recipients: values.recipients || [], // nếu có chọn người nhận cụ thể
+      });
+
+      message.success("Đã gửi thông báo thành công!");
       setAnnouncementModal(false);
       form.resetFields();
+
+      // Refresh danh sách thông báo
+      if (selectedClassId) {
+        await fetchClassNotifications(selectedClassId);
+      }
     } catch (error) {
-      message.error("Lỗi khi gửi thông báo");
+      console.error("Error sending notification:", error);
+      message.error(
+        "Lỗi khi gửi thông báo: " + (error.message || "Không xác định")
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -492,25 +512,87 @@ export default function ClassManagement() {
     setBadgeModal(true);
   };
 
+  const handleSendReminder = async (values) => {
+    try {
+      setLoading(true);
+
+      // only students in currentClass should be recipients
+      const recipients = (currentClass?.students || []).map((s) => s.id);
+
+      await sendClassReminder(selectedClassId, {
+        title: values.type || "Nhắc nhở",
+        content: values.content,
+        senderId: currentUser?.uid || currentUser?.id || "unknown",
+        dueDate: values.dueDate ? values.dueDate.toISOString() : null,
+        recipients,
+      });
+
+      message.success("Đã gửi nhắc nhở thành công!");
+      setReminderModal(false);
+      form.resetFields();
+
+      // Refresh danh sách nhắc nhở
+      if (selectedClassId) {
+        await fetchClassReminders(selectedClassId);
+      }
+    } catch (error) {
+      console.error("Error sending reminder:", error);
+      message.error(
+        "Lỗi khi gửi nhắc nhở: " + (error.message || "Không xác định")
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleAwardBadge = async () => {
     try {
+      setLoading(true);
       const values = await badgeForm.validateFields();
-      if (!selectedBadgeStudent) return message.error("Chưa chọn học sinh");
+
+      if (!selectedBadgeStudent) {
+        message.error("Chưa chọn học sinh");
+        return;
+      }
+
       const badgeMeta = classBadges.find((b) => b.id === values.badgeId);
-      const newBadge = {
-        id: `${selectedBadgeStudent.id}_${values.badgeId}_${Date.now()}`,
-        studentId: selectedBadgeStudent.id,
+
+      await sendStudentReward(selectedBadgeStudent.id, {
+        title: badgeMeta?.name || "Huy hiệu",
+        content: badgeMeta?.description || "",
+        senderId: currentUser?.uid || currentUser?.id || "unknown",
         badgeId: values.badgeId,
-        badgeName: badgeMeta?.name || "Huy hiệu",
-        teacher: currentUser?.name || currentUser?.email || "Giáo viên",
-        comment: values.comment || "",
-        date: dayjs().format("YYYY-MM-DD"),
-      };
-      setStudentBadges((prev) => [newBadge, ...prev]);
+        note: values.comment || "",
+      });
+
+      // Cập nhật state local
+      setStudentBadges((prev) => [
+        {
+          id: `${selectedBadgeStudent.id}_${values.badgeId}_${Date.now()}`,
+          studentId: selectedBadgeStudent.id,
+          badgeId: values.badgeId,
+          badgeName: badgeMeta?.name || "Huy hiệu",
+          teacher: currentUser?.name || currentUser?.email || "Giáo viên",
+          comment: values.comment || "",
+          date: dayjs().format("YYYY-MM-DD"),
+        },
+        ...prev,
+      ]);
+
       setBadgeModal(false);
-      message.success("Đã trao huy hiệu");
-    } catch (err) {
-      // validation failed
+      badgeForm.resetFields();
+      message.success("Đã trao huy hiệu thành công!");
+    } catch (error) {
+      console.error("Error awarding badge:", error);
+      if (error.name === "ValidationError") {
+        // Validation failed - don't show error message
+        return;
+      }
+      message.error(
+        "Lỗi khi trao huy hiệu: " + (error.message || "Không xác định")
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -557,6 +639,14 @@ export default function ClassManagement() {
     const avg = items.reduce((s, r) => s + r.rating, 0) / items.length;
     return Math.round(avg * 10) / 10;
   };
+
+  useEffect(() => {
+    fetchHomeRoomClasses();
+    if (selectedClassId) {
+      fetchClassNotifications(selectedClassId);
+      fetchClassReminders(selectedClassId);
+    }
+  }, [selectedClassId, currentUser]);
 
   return (
     <div
@@ -1489,14 +1579,10 @@ export default function ClassManagement() {
             <Button
               type="primary"
               htmlType="submit"
-              icon={<FaPaperPlane />}
-              style={{
-                background: "linear-gradient(135deg, #52c41a, #73d13d)",
-                border: "none",
-                borderRadius: "8px",
-              }}
+              loading={loading}
+              disabled={loading}
             >
-              Gửi tin nhắn
+              {loading ? "Đang gửi..." : "Gửi thông báo"}
             </Button>
           </Form.Item>
         </Form>
@@ -1562,6 +1648,7 @@ export default function ClassManagement() {
             <Button
               type="primary"
               htmlType="submit"
+              loading={loading}
               icon={<FaPaperPlane />}
               style={{
                 background: "linear-gradient(135deg, #1890ff, #40a9ff)",
@@ -1588,7 +1675,7 @@ export default function ClassManagement() {
         footer={null}
         width={600}
       >
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" onFinish={handleSendReminder}>
           <Form.Item label="Loại nhắc nhở">
             <Select placeholder="Chọn loại nhắc nhở" size="large">
               <Option value="homework">Bài tập về nhà</Option>
@@ -1616,6 +1703,8 @@ export default function ClassManagement() {
             </Button>
             <Button
               type="primary"
+              htmlType="submit"
+              loading={loading}
               icon={<FaPaperPlane />}
               style={{
                 background: "linear-gradient(135deg, #faad14, #ffc53d)",

@@ -14,7 +14,7 @@ import { UserOutlined, EditOutlined } from "@ant-design/icons";
 import {
   updateProfileForStudent,
   updateAvatarForUid,
-} from "../../services/profileTeacherService";
+} from "../../services/teacherServices/profileTeacherService";
 import { useAuth } from "../../context/AuthContext";
 
 export default function ProfileStudent() {

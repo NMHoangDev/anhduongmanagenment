@@ -15,9 +15,9 @@ import {
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import TimetableEditModal from "../components/TimetableEditModal";
-import * as timetableService from "../services/timetableService";
-import * as classesService from "../services/classesService";
-import * as teacherService from "../services/teacherService";
+import * as timetableService from "../services/adminServices/timetableService";
+import * as classesService from "../services/adminServices/classesService";
+import * as teacherService from "../services/adminServices/teacherService";
 import dayjs from "dayjs";
 import weekOfYear from "dayjs/plugin/weekOfYear";
 
