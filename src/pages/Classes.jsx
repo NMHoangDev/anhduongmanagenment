@@ -22,6 +22,7 @@ import {
   Space,
   Tag,
   Popconfirm,
+  Table,
 } from "antd";
 import * as classesService from "../services/adminServices/classesService";
 import * as teacherService from "../services/adminServices/teacherService";
@@ -46,19 +47,64 @@ export default function ClassListPage() {
   const [stats, setStats] = useState({});
   const [hrtLoading, setHrtLoading] = useState(false);
 
-  // Modal states for GVCN
+  // Modal / selection states for phân công GVCN
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
-  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [selectedClassForAssign, setSelectedClassForAssign] = useState(null);
-  const [selectedClassForTransfer, setSelectedClassForTransfer] =
-    useState(null);
   const [selectedTeacherForAssign, setSelectedTeacherForAssign] =
     useState(null);
+
+  // Modal / selection states for chuyển đổi GVCN
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [selectedClassForTransfer, setSelectedClassForTransfer] =
+    useState(null);
   const [selectedNewTeacher, setSelectedNewTeacher] = useState(null);
+
+  // Teaching assignments (giảng dạy)
+  const [subjects, setSubjects] = useState([]);
+  const [teachingAssignments, setTeachingAssignments] = useState([]);
+  const [isTeachingAssignModalOpen, setIsTeachingAssignModalOpen] =
+    useState(false);
+  const [selectedClassForTeaching, setSelectedClassForTeaching] =
+    useState(null);
+  const [selectedTeacherForTeaching, setSelectedTeacherForTeaching] =
+    useState(null);
+  const [selectedSubjectForTeaching, setSelectedSubjectForTeaching] =
+    useState(null);
+  const [teachingLoading, setTeachingLoading] = useState(false);
+
+  // Teaching assignments UI per-class
+  const [
+    selectedClassTeachingAssignments,
+    setSelectedClassTeachingAssignments,
+  ] = useState([]);
+  const [loadingClassTeachingAssignments, setLoadingClassTeachingAssignments] =
+    useState(false);
+  const openTeachingAssignForClass = (classId) => {
+    setSelectedClassForTeaching(classId);
+    setIsTeachingAssignModalOpen(true);
+  };
+  const fetchTeachingAssignmentsForClass = async (classId) => {
+    if (!classId) {
+      setSelectedClassTeachingAssignments([]);
+      return;
+    }
+    setLoadingClassTeachingAssignments(true);
+    try {
+      const list = await classesService.getTeachingAssignmentsByClass(classId);
+      setSelectedClassTeachingAssignments(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error("Error fetching teaching assignments for class:", err);
+      setSelectedClassTeachingAssignments([]);
+    } finally {
+      setLoadingClassTeachingAssignments(false);
+    }
+  };
 
   useEffect(() => {
     fetchClasses();
     fetchHRTData();
+    fetchSubjects();
+    fetchTeachingAssignments();
   }, []);
 
   const fetchClasses = async () => {
@@ -117,6 +163,66 @@ export default function ClassListPage() {
       console.error("Error fetching HRT data:", error);
     }
     setHrtLoading(false);
+  };
+
+  // Subjects list
+  const fetchSubjects = async () => {
+    try {
+      const subs = await classesService.getAllSubjects();
+      setSubjects(subs);
+    } catch (err) {
+      console.error("Error fetching subjects:", err);
+    }
+  };
+
+  // Teaching assignments list
+  const fetchTeachingAssignments = async () => {
+    setTeachingLoading(true);
+    try {
+      const all = await classesService.getAllClassAssignments();
+
+      let teach = [];
+
+      if (Array.isArray(all) && all.length > 0) {
+        // case A: service returned classes with teachingAssignments array
+        if (all[0].teachingAssignments) {
+          teach = all
+            .flatMap((a) => a.teachingAssignments || [])
+            .map((t) => ({
+              teacherId: t.teacherId,
+              classId: t.classId,
+              subjectId: t.subjectId,
+              assignedAt: t.assignedAt || t.assignedAtTimestamp || null,
+              assignedBy: t.assignedBy || null,
+              id: `${t.classId}_${t.teacherId}_${t.subjectId}`,
+            }));
+        } else {
+          // case B: service returned flat assignment records (e.g. collection classAssignments)
+          teach = all
+            .filter(
+              (r) =>
+                r &&
+                (r.type === "teaching" ||
+                  (r.classId && r.teacherId && r.subjectId))
+            )
+            .map((r) => ({
+              teacherId: r.teacherId,
+              classId: r.classId,
+              subjectId: r.subjectId,
+              assignedAt: r.assignedAt || r.assignedAtTimestamp || null,
+              assignedBy: r.assignedBy || null,
+              id: `${r.classId}_${r.teacherId}_${r.subjectId}`,
+            }));
+        }
+      }
+
+      setTeachingAssignments(teach);
+    } catch (err) {
+      console.error("Error fetching teaching assignments:", err);
+      setTeachingAssignments([]);
+    } finally {
+      setTeachingLoading(false);
+    }
   };
 
   // Phân công GVCN
@@ -238,6 +344,8 @@ export default function ClassListPage() {
 
   const handleViewClass = (classData) => {
     setSelectedClass(classData);
+    // load teaching assignments for this class
+    fetchTeachingAssignmentsForClass(classData?.id);
   };
 
   const filteredClasses = classes.filter(
@@ -250,6 +358,121 @@ export default function ClassListPage() {
           .toLowerCase()
           .includes(searchQuery.toLowerCase()))
   );
+
+  // Teaching assignment handlers
+  const openTeachingAssignModal = () => {
+    setSelectedClassForTeaching(null);
+    setSelectedTeacherForTeaching(null);
+    setSelectedSubjectForTeaching(null);
+    setIsTeachingAssignModalOpen(true);
+  };
+
+  const handleAssignTeaching = async () => {
+    if (
+      !selectedClassForTeaching ||
+      !selectedTeacherForTeaching ||
+      !selectedSubjectForTeaching
+    ) {
+      message.error("Vui lòng chọn lớp, giáo viên và môn học.");
+      return;
+    }
+    try {
+      setTeachingLoading(true);
+      await classesService.assignTeachingTeacher(
+        selectedTeacherForTeaching,
+        selectedClassForTeaching,
+        selectedSubjectForTeaching,
+        "admin"
+      );
+      message.success("Phân công giảng dạy thành công.");
+      setIsTeachingAssignModalOpen(false);
+      await Promise.all([fetchClasses(), fetchTeachingAssignments()]);
+    } catch (err) {
+      console.error("Error assigning teaching:", err);
+      message.error("Lỗi khi phân công giảng dạy: " + (err.message || ""));
+    } finally {
+      setTeachingLoading(false);
+    }
+  };
+
+  const handleUnassignTeaching = async (teacherId, classId, subjectId) => {
+    if (!teacherId || !classId || !subjectId) return;
+    try {
+      setTeachingLoading(true);
+      await classesService.unassignTeachingTeacher(
+        teacherId,
+        classId,
+        subjectId
+      );
+      message.success("Hủy phân công giảng dạy thành công.");
+      await Promise.all([fetchClasses(), fetchTeachingAssignments()]);
+    } catch (err) {
+      console.error("Error unassigning teaching:", err);
+      message.error("Lỗi khi hủy phân công giảng dạy: " + (err.message || ""));
+    } finally {
+      setTeachingLoading(false);
+    }
+  };
+
+  // Columns for teaching assignments table
+  const teachingColumns = [
+    {
+      title: "Lớp",
+      dataIndex: "classId",
+      key: "classId",
+      render: (cid) => {
+        const cls = classes.find((c) => c.id === cid);
+        return cls ? `${cls.name} (${cls.grade})` : cid;
+      },
+    },
+    {
+      title: "Môn học",
+      dataIndex: "subjectId",
+      key: "subjectId",
+      render: (sid) => {
+        const s = subjects.find((x) => x.id === sid);
+        return s ? s.name : sid;
+      },
+    },
+    {
+      title: "Giáo viên",
+      dataIndex: "teacherId",
+      key: "teacherId",
+      render: (tid) => {
+        const t = availableTeachers.find((x) => x.id === tid);
+        return t ? t.name : tid;
+      },
+    },
+    {
+      title: "Ngày phân công",
+      dataIndex: "assignedAt",
+      key: "assignedAt",
+      render: (ts) =>
+        ts && ts.toDate ? ts.toDate().toLocaleString("vi-VN") : "-",
+    },
+    {
+      title: "Thao tác",
+      key: "action",
+      render: (_, record) => (
+        <Popconfirm
+          title="Hủy phân công này?"
+          onConfirm={() =>
+            handleUnassignTeaching(
+              record.teacherId,
+              record.classId,
+              record.subjectId
+            )
+          }
+          okText="Có"
+          cancelText="Không"
+        >
+          <Button danger size="small">
+            Hủy
+          </Button>
+        </Popconfirm>
+      ),
+    },
+  ];
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#f6f6fa" }}>
@@ -410,6 +633,136 @@ export default function ClassListPage() {
                         )
                       )}
                     </ul>
+                  </div>
+
+                  <div style={{ marginTop: 18 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <strong>Phân công giảng dạy (Lớp này)</strong>
+                      <div>
+                        <Button
+                          size="small"
+                          type="primary"
+                          onClick={() =>
+                            openTeachingAssignForClass(selectedClass.id)
+                          }
+                        >
+                          Phân công giảng dạy cho lớp này
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 12 }}>
+                      {loadingClassTeachingAssignments ? (
+                        <div>Đang tải phân công...</div>
+                      ) : selectedClassTeachingAssignments.length === 0 ? (
+                        <div style={{ color: "#666" }}>
+                          Chưa có phân công giảng dạy cho lớp này.
+                        </div>
+                      ) : (
+                        <table
+                          style={{
+                            width: "100%",
+                            borderCollapse: "collapse",
+                            marginTop: 8,
+                          }}
+                        >
+                          <thead>
+                            <tr style={{ background: "#fafafa" }}>
+                              <th
+                                style={{
+                                  padding: 8,
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #eee",
+                                }}
+                              >
+                                Môn
+                              </th>
+                              <th
+                                style={{
+                                  padding: 8,
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #eee",
+                                }}
+                              >
+                                Giáo viên
+                              </th>
+                              <th
+                                style={{
+                                  padding: 8,
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #eee",
+                                }}
+                              >
+                                Hành động
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedClassTeachingAssignments.map((a, idx) => {
+                              const subj = subjects.find(
+                                (s) => s.id === a.subjectId
+                              );
+                              const teacher = availableTeachers.find(
+                                (t) => t.id === a.teacherId
+                              );
+                              return (
+                                <tr
+                                  key={
+                                    a.teacherId + "_" + a.subjectId + "_" + idx
+                                  }
+                                >
+                                  <td
+                                    style={{
+                                      padding: 8,
+                                      borderBottom: "1px solid #f0f0f0",
+                                    }}
+                                  >
+                                    {subj ? subj.name : a.subjectId}
+                                  </td>
+                                  <td
+                                    style={{
+                                      padding: 8,
+                                      borderBottom: "1px solid #f0f0f0",
+                                    }}
+                                  >
+                                    {teacher ? teacher.name : a.teacherId}
+                                  </td>
+                                  <td
+                                    style={{
+                                      padding: 8,
+                                      borderBottom: "1px solid #f0f0f0",
+                                    }}
+                                  >
+                                    <Popconfirm
+                                      title="Hủy phân công giảng dạy này?"
+                                      onConfirm={() =>
+                                        handleUnassignTeaching(
+                                          a.teacherId,
+                                          selectedClass.id,
+                                          a.subjectId
+                                        )
+                                      }
+                                      okText="Có"
+                                      cancelText="Không"
+                                    >
+                                      <Button size="small" danger>
+                                        Hủy
+                                      </Button>
+                                    </Popconfirm>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -583,6 +936,42 @@ export default function ClassListPage() {
               </div>
             </TabPane>
 
+            <TabPane tab={`Phân công giảng dạy`} key="teaching">
+              <div
+                style={{
+                  marginBottom: 16,
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}
+              >
+                <Space>
+                  <Button
+                    type="primary"
+                    icon={<FaPlus />}
+                    onClick={openTeachingAssignModal}
+                  >
+                    Phân công giảng dạy
+                  </Button>
+                  <Button
+                    onClick={fetchTeachingAssignments}
+                    loading={teachingLoading}
+                  >
+                    Làm mới
+                  </Button>
+                </Space>
+              </div>
+
+              <Card style={{ marginBottom: 12 }}>
+                <Table
+                  dataSource={teachingAssignments}
+                  columns={teachingColumns}
+                  rowKey={(r) => r.id}
+                  loading={teachingLoading}
+                  pagination={{ pageSize: 10 }}
+                />
+              </Card>
+            </TabPane>
+
             <TabPane
               tab={`Lớp chưa có GVCN (${classesWithoutHRT.length})`}
               key="unassigned"
@@ -672,6 +1061,74 @@ export default function ClassListPage() {
                     {teacher.name} - {teacher.email}
                   </Option>
                 ))}
+            </Select>
+          </div>
+        </Modal>
+
+        {/* Modal phân công giảng dạy */}
+        <Modal
+          title="Phân công giảng dạy"
+          open={isTeachingAssignModalOpen}
+          onOk={handleAssignTeaching}
+          onCancel={() => {
+            setIsTeachingAssignModalOpen(false);
+            setSelectedClassForTeaching(null);
+            setSelectedTeacherForTeaching(null);
+            setSelectedSubjectForTeaching(null);
+          }}
+          confirmLoading={teachingLoading}
+        >
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", marginBottom: 8 }}>
+              Chọn lớp:
+            </label>
+            <Select
+              style={{ width: "100%" }}
+              value={selectedClassForTeaching}
+              onChange={setSelectedClassForTeaching}
+              placeholder="Chọn lớp"
+            >
+              {classes.map((cls) => (
+                <Option key={cls.id} value={cls.id}>
+                  {cls.name} - Khối {cls.grade}
+                </Option>
+              ))}
+            </Select>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", marginBottom: 8 }}>
+              Chọn môn:
+            </label>
+            <Select
+              style={{ width: "100%" }}
+              value={selectedSubjectForTeaching}
+              onChange={setSelectedSubjectForTeaching}
+              placeholder="Chọn môn học"
+            >
+              {subjects.map((s) => (
+                <Option key={s.id} value={s.id}>
+                  {s.name}
+                </Option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", marginBottom: 8 }}>
+              Chọn giáo viên:
+            </label>
+            <Select
+              style={{ width: "100%" }}
+              value={selectedTeacherForTeaching}
+              onChange={setSelectedTeacherForTeaching}
+              placeholder="Chọn giáo viên"
+            >
+              {(availableTeachers || []).map((t) => (
+                <Option key={t.id} value={t.id}>
+                  {t.name} - {t.email}
+                </Option>
+              ))}
             </Select>
           </div>
         </Modal>

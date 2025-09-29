@@ -12,6 +12,7 @@ import {
   query,
   where,
   serverTimestamp,
+  Timestamp, // <-- thêm import
 } from "firebase/firestore";
 
 // Lấy thông tin giáo viên theo id
@@ -709,15 +710,16 @@ export const assignTeachingTeacher = async (
     const classRef = doc(db, "classes", classId);
     const teacherRef = doc(db, "teachers", teacherId);
 
+    // dùng Timestamp.now() thay vì serverTimestamp() bên trong object arrayUnion
     const assignmentObj = {
       teacherId,
       subjectId,
       classId,
-      assignedAt: serverTimestamp(),
+      assignedAt: Timestamp.now(), // concrete timestamp acceptable in arrayUnion
       assignedBy: assignerId || "system",
     };
 
-    // Thêm vào mảng teachingAssignments trên lớp
+    // Thêm vào mảng teachingAssignments trên lớp (không dùng serverTimestamp bên trong object)
     await updateDoc(classRef, {
       teachingAssignments: arrayUnion(assignmentObj),
       lastUpdated: serverTimestamp(),
@@ -743,7 +745,7 @@ export const assignTeachingTeacher = async (
       teacherId,
       classId,
       subjectId,
-      assignedAt: serverTimestamp(),
+      assignedAt: serverTimestamp(), // setDoc supports serverTimestamp()
       assignedBy: assignerId || "system",
       status: "active",
       type: "teaching",
