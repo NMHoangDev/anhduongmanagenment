@@ -692,9 +692,8 @@ export const getAllSubjects = async () => {
 /**
  * Phân công giáo viên giảng dạy cho 1 lớp với 1 môn
  * Lưu vào:
- * - trường classes.{teachingAssignments} (array of objects { teacherId, subjectId, classId, assignedAt, assignedBy })
- * - tạo record trong classAssignments (id: `${classId}_${teacherId}_${subjectId}` , type: 'teaching')
- * - cập nhật teachers.{teachingAssignments} để dễ tra cứu (array of { classId, subjectId })
+ * - collection classAssignments (id: `${classId}_${teacherId}_${subjectId}`, type: 'teaching')
+ * - (tuỳ chọn) cập nhật teachers.teachingAssignments để tiện tra cứu
  */
 export const assignTeachingTeacher = async (
   teacherId,
@@ -707,52 +706,59 @@ export const assignTeachingTeacher = async (
       throw new Error("teacherId, classId và subjectId là bắt buộc");
     }
 
-    const classRef = doc(db, "classes", classId);
-    const teacherRef = doc(db, "teachers", teacherId);
+    const assignmentId = `${classId}_${teacherId}_${subjectId}`;
+    const assignmentRef = doc(db, "classAssignments", assignmentId);
+    const exist = await getDoc(assignmentRef);
 
-    // dùng Timestamp.now() thay vì serverTimestamp() bên trong object arrayUnion
-    const assignmentObj = {
-      teacherId,
-      subjectId,
-      classId,
-      assignedAt: Timestamp.now(), // concrete timestamp acceptable in arrayUnion
-      assignedBy: assignerId || "system",
-    };
-
-    // Thêm vào mảng teachingAssignments trên lớp (không dùng serverTimestamp bên trong object)
-    await updateDoc(classRef, {
-      teachingAssignments: arrayUnion(assignmentObj),
-      lastUpdated: serverTimestamp(),
-    });
-
-    // Cập nhật teacher document (danh sách môn/lớp đang dạy)
-    await updateDoc(teacherRef, {
-      teachingAssignments: arrayUnion({
+    if (exist.exists()) {
+      const data = exist.data();
+      if (data.status !== "active") {
+        await updateDoc(assignmentRef, {
+          status: "active",
+          reactivatedAt: serverTimestamp(),
+          assignedBy: assignerId || data.assignedBy || "system",
+        });
+      } // nếu đã active thì bỏ qua
+    } else {
+      await setDoc(assignmentRef, {
+        teacherId,
         classId,
         subjectId,
-      }),
-      isTeaching: true,
-      lastUpdated: serverTimestamp(),
-    });
+        assignedAt: serverTimestamp(),
+        assignedBy: assignerId || "system",
+        status: "active",
+        type: "teaching",
+      });
+    }
 
-    // Tạo/ghi record trong collection classAssignments để dễ tracking
-    const assignmentRef = doc(
-      db,
-      "classAssignments",
-      `${classId}_${teacherId}_${subjectId}`
-    );
-    await setDoc(assignmentRef, {
-      teacherId,
-      classId,
-      subjectId,
-      assignedAt: serverTimestamp(), // setDoc supports serverTimestamp()
-      assignedBy: assignerId || "system",
-      status: "active",
-      type: "teaching",
-    });
+    // (Tuỳ chọn) Cập nhật doc teacher để dễ truy vấn theo giáo viên
+    const teacherRef = doc(db, "teachers", teacherId);
+    try {
+      await updateDoc(teacherRef, {
+        teachingAssignments: arrayUnion({ classId, subjectId }),
+        isTeaching: true,
+        lastUpdated: serverTimestamp(),
+      });
+    } catch (e) {
+      // Fallback: đọc và ghi lại nếu arrayUnion không match shape
+      const tSnap = await getDoc(teacherRef);
+      if (tSnap.exists()) {
+        const cur = tSnap.data().teachingAssignments || [];
+        const exists = cur.some(
+          (a) => a.classId === classId && a.subjectId === subjectId
+        );
+        if (!exists) {
+          await updateDoc(teacherRef, {
+            teachingAssignments: [...cur, { classId, subjectId }],
+            isTeaching: true,
+            lastUpdated: serverTimestamp(),
+          });
+        }
+      }
+    }
 
     console.log(
-      `Assigned teacher ${teacherId} to teach subject ${subjectId} for class ${classId}`
+      `Assigned teacher ${teacherId} to teach ${subjectId} for class ${classId} (classAssignments)`
     );
     return true;
   } catch (error) {
@@ -762,10 +768,9 @@ export const assignTeachingTeacher = async (
 };
 
 /**
- * Hủy phân công giảng dạy (remove)
- * - Remove object từ classes.teachingAssignments (arrayRemove)
- * - Cập nhật teachers.teachingAssignments (xoá object {classId, subjectId})
- * - Cập nhật classAssignments record (status -> inactive)
+ * Hủy phân công giảng dạy (không sửa doc classes)
+ * - Cập nhật classAssignments.status -> 'inactive'
+ * - Cập nhật teachers.teachingAssignments (xoá {classId, subjectId})
  */
 export const unassignTeachingTeacher = async (
   teacherId,
@@ -777,58 +782,29 @@ export const unassignTeachingTeacher = async (
       throw new Error("teacherId, classId và subjectId là bắt buộc");
     }
 
-    const classRef = doc(db, "classes", classId);
-    const teacherRef = doc(db, "teachers", teacherId);
+    // 1) Cập nhật record trong classAssignments
     const assignmentRef = doc(
       db,
       "classAssignments",
       `${classId}_${teacherId}_${subjectId}`
     );
-
-    // Object shape must match what was stored (without serverTimestamp)
-    const storedObj = {
-      teacherId,
-      subjectId,
-      classId,
-      // assignedAt/assignedBy not included here because arrayRemove matches entire object.
-      // To ensure removal works regardless of timestamps we perform a read + filter fallback below.
-    };
-
-    // Try arrayRemove by constructing object without timestamps (may not match)
-    try {
-      await updateDoc(classRef, {
-        teachingAssignments: arrayRemove(storedObj),
-        lastUpdated: serverTimestamp(),
+    const assignSnap = await getDoc(assignmentRef);
+    if (assignSnap.exists()) {
+      await updateDoc(assignmentRef, {
+        status: "inactive",
+        unassignedAt: serverTimestamp(),
       });
-    } catch (err) {
-      // fallback: read current doc and filter manually
-      const classSnap = await getDoc(classRef);
-      if (classSnap.exists()) {
-        const data = classSnap.data();
-        const current = data.teachingAssignments || [];
-        const filtered = current.filter(
-          (a) =>
-            !(
-              a.teacherId === teacherId &&
-              a.subjectId === subjectId &&
-              a.classId === classId
-            )
-        );
-        await updateDoc(classRef, {
-          teachingAssignments: filtered,
-          lastUpdated: serverTimestamp(),
-        });
-      }
     }
 
-    // Remove from teacher.teachingAssignments (object {classId, subjectId})
+    // 2) Cập nhật teacher.teachingAssignments
+    const teacherRef = doc(db, "teachers", teacherId);
     try {
       await updateDoc(teacherRef, {
         teachingAssignments: arrayRemove({ classId, subjectId }),
         lastUpdated: serverTimestamp(),
       });
     } catch (err) {
-      // fallback: read & filter
+      // fallback: đọc & filter
       const teacherSnap = await getDoc(teacherRef);
       if (teacherSnap.exists()) {
         const tdata = teacherSnap.data();
@@ -843,17 +819,8 @@ export const unassignTeachingTeacher = async (
       }
     }
 
-    // Mark assignment record inactive
-    const assignSnap = await getDoc(assignmentRef);
-    if (assignSnap.exists()) {
-      await updateDoc(assignmentRef, {
-        status: "inactive",
-        unassignedAt: serverTimestamp(),
-      });
-    }
-
     console.log(
-      `Unassigned teacher ${teacherId} from ${subjectId} @ ${classId}`
+      `Unassigned teacher ${teacherId} from ${subjectId} @ ${classId} (classAssignments)`
     );
     return true;
   } catch (error) {
@@ -863,14 +830,24 @@ export const unassignTeachingTeacher = async (
 };
 
 /**
- * Lấy danh sách phân công giảng dạy cho 1 lớp
+ * Lấy danh sách phân công giảng dạy cho 1 lớp (đọc từ classAssignments)
  */
-export const getTeachingAssignmentsByClass = async (classId) => {
+export const getTeachingAssignmentsByClass = async (
+  classId,
+  includeInactive = false
+) => {
   try {
-    const classRef = doc(db, "classes", classId);
-    const classSnap = await getDoc(classRef);
-    if (!classSnap.exists()) return [];
-    return classSnap.data().teachingAssignments || [];
+    const base = [
+      collection(db, "classAssignments"),
+      where("type", "==", "teaching"),
+      where("classId", "==", classId),
+    ];
+    const qx = includeInactive
+      ? query(...base)
+      : query(...base, where("status", "==", "active"));
+
+    const snap = await getDocs(qx);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   } catch (error) {
     console.error("Error getting teaching assignments by class:", error);
     return [];
@@ -878,14 +855,24 @@ export const getTeachingAssignmentsByClass = async (classId) => {
 };
 
 /**
- * Lấy danh sách phân công giảng dạy của 1 giáo viên
+ * Lấy danh sách phân công giảng dạy của 1 giáo viên (đọc từ classAssignments)
  */
-export const getTeachingAssignmentsByTeacher = async (teacherId) => {
+export const getTeachingAssignmentsByTeacher = async (
+  teacherId,
+  includeInactive = false
+) => {
   try {
-    const teacherRef = doc(db, "teachers", teacherId);
-    const teacherSnap = await getDoc(teacherRef);
-    if (!teacherSnap.exists()) return [];
-    return teacherSnap.data().teachingAssignments || [];
+    const base = [
+      collection(db, "classAssignments"),
+      where("type", "==", "teaching"),
+      where("teacherId", "==", teacherId),
+    ];
+    const qx = includeInactive
+      ? query(...base)
+      : query(...base, where("status", "==", "active"));
+
+    const snap = await getDocs(qx);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   } catch (error) {
     console.error("Error getting teaching assignments by teacher:", error);
     return [];

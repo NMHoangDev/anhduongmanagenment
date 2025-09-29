@@ -13,7 +13,7 @@ import {
 import { db } from "../firebase";
 import * as timetableService from "../adminServices/timetableService";
 import { calculateDateFromWeekAndDay } from "../../utils/dateUtils";
-
+import { documentId } from "firebase/firestore";
 /**
  * FIX: Sửa tất cả ngày trong timetable_sessions để khớp với weekId và dayOfWeek
  */
@@ -242,167 +242,8 @@ export const isHomeRoomTeacher = async (teacherId, classId) => {
 };
 
 // ==================== STUDENT ATTENDANCE ====================
-
-/**
- * Điểm danh học sinh - CHỈ CHO PHÉP GVCN
- * @param {string} studentId - ID của học sinh
- * @param {string} classId - ID của lớp
- * @param {string} teacherId - ID của giáo viên điểm danh
- * @param {string} status - Trạng thái: 'present', 'absent', 'late', 'excused'
- * @param {string} note - Ghi chú (optional)
- */
-export const markStudentAttendance = async (
-  studentId,
-  classId,
-  teacherId,
-  status,
-  note = ""
-) => {
-  try {
-    // KIỂM TRA QUYỀN: Chỉ GVCN mới được điểm danh
-    const isHRT = await isHomeRoomTeacher(teacherId, classId);
-    if (!isHRT) {
-      throw new Error(
-        "Chỉ giáo viên chủ nhiệm mới có thể điểm danh học sinh trong lớp này"
-      );
-    }
-
-    const today = new Date();
-    const dateString = today.toISOString().split("T")[0]; // YYYY-MM-DD
-
-    const attendanceId = `${studentId}_${dateString}`;
-
-    const attendanceData = {
-      studentId,
-      classId,
-      teacherId,
-      date: dateString,
-      timestamp: Timestamp.now(),
-      status, // 'present', 'absent', 'late', 'excused'
-      note,
-      markedBy: teacherId,
-      markedAt: Timestamp.now(),
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-      isHomeRoomTeacher: true, // Flag để phân biệt GVCN điểm danh
-    };
-
-    await setDoc(doc(db, "student_attendance", attendanceId), attendanceData);
-
-    console.log("✅ Điểm danh học sinh thành công:", {
-      studentId,
-      status,
-      date: dateString,
-      byHomeRoomTeacher: true,
-    });
-
-    return {
-      success: true,
-      attendanceId,
-      data: attendanceData,
-    };
-  } catch (error) {
-    console.error("❌ Lỗi điểm danh học sinh:", error);
-    throw error;
-  }
-};
-
-/**
- * Lấy điểm danh học sinh theo ngày - CHỈ CHO LỚPS CHỦ NHIỆM
- * @param {string} classId - ID của lớp
- * @param {string} date - Ngày (YYYY-MM-DD)
- * @param {string} teacherId - ID của giáo viên (để kiểm tra quyền)
- */
-export const getStudentAttendanceByDate = async (classId, date, teacherId) => {
-  try {
-    // KIỂM TRA QUYỀN: Chỉ GVCN mới được xem điểm danh
-    if (teacherId) {
-      const isHRT = await isHomeRoomTeacher(teacherId, classId);
-      if (!isHRT) {
-        throw new Error(
-          "Chỉ giáo viên chủ nhiệm mới có thể xem điểm danh lớp này"
-        );
-      }
-    }
-
-    const q = query(
-      collection(db, "student_attendance"),
-      where("classId", "==", classId),
-      where("date", "==", date)
-    );
-
-    const querySnapshot = await getDocs(q);
-    const attendanceList = [];
-
-    querySnapshot.forEach((doc) => {
-      attendanceList.push({
-        id: doc.id,
-        ...doc.data(),
-      });
-    });
-
-    return attendanceList;
-  } catch (error) {
-    console.error("❌ Lỗi lấy điểm danh học sinh:", error);
-    throw error;
-  }
-};
-
-/**
- * Điểm danh hàng loạt cho học sinh trong lớp - CHỈ CHO GVCN
- * @param {Array} attendanceList - Danh sách điểm danh [{studentId, status, note}]
- * @param {string} classId - ID của lớp
- * @param {string} teacherId - ID của giáo viên
- */
-export const markBulkStudentAttendance = async (
-  attendanceList,
-  classId,
-  teacherId
-) => {
-  try {
-    // KIỂM TRA QUYỀN: Chỉ GVCN mới được điểm danh
-    const isHRT = await isHomeRoomTeacher(teacherId, classId);
-    if (!isHRT) {
-      throw new Error(
-        "Chỉ giáo viên chủ nhiệm mới có thể điểm danh học sinh trong lớp này"
-      );
-    }
-
-    const today = new Date();
-    const dateString = today.toISOString().split("T")[0];
-    const promises = [];
-
-    for (const attendance of attendanceList) {
-      promises.push(
-        markStudentAttendance(
-          attendance.studentId,
-          classId,
-          teacherId,
-          attendance.status,
-          attendance.note
-        )
-      );
-    }
-
-    await Promise.all(promises);
-
-    console.log("✅ Điểm danh hàng loạt thành công:", {
-      classId,
-      date: dateString,
-      count: attendanceList.length,
-      byHomeRoomTeacher: true,
-    });
-
-    return {
-      success: true,
-      date: dateString,
-      count: attendanceList.length,
-    };
-  } catch (error) {
-    console.error("❌ Lỗi điểm danh hàng loạt:", error);
-    throw error;
-  }
-};
+// Giữ lại duy nhất hàm tổng quan; các hàm mark/get/ bulk/... bản cũ (chỉ GVCN) đã bị loại bỏ.
+// Bản mới có subjectId nằm ở phần "CẬP NHẬT QUYỀN VỚI subjectId" phía dưới.
 
 /**
  * Lấy tổng quan điểm danh lớp học theo tháng - CHỈ CHO GVCN
@@ -460,7 +301,6 @@ export const getClassAttendanceOverview = async (
       dailyStats[date][record.status]++;
     });
 
-    // Sắp xếp kết quả theo ngày tăng dần
     const sortedDailyStats = Object.values(dailyStats).sort(
       (a, b) => new Date(a.date) - new Date(b.date)
     );
@@ -472,621 +312,526 @@ export const getClassAttendanceOverview = async (
   }
 };
 
-/**
- * Lấy danh sách học sinh trong lớp chủ nhiệm để điểm danh
- * @param {string} classId - ID của lớp
- * @param {string} teacherId - ID của giáo viên
- * @param {string} date - Ngày điểm danh (YYYY-MM-DD)
- */
-export const getHomeRoomStudentsForAttendance = async (
-  classId,
+// ==================== CẬP NHẬT QUYỀN VỚI subjectId ====================
+
+// helper cũ
+const normalizeId = (v) => {
+  if (!v) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "object") return v.id || v._id || v.teacherId || null;
+  return String(v);
+};
+
+// REPLACE: kiểm tra GV có được phân công subjectId trong lớp KHÔNG đọc từ classes.teachingAssignments
+export const isTeacherAssignedToClassSubject = async (
   teacherId,
-  date
+  classId,
+  subjectId
 ) => {
   try {
-    // KIỂM TRA QUYỀN: Chỉ GVCN
-    const isHRT = await isHomeRoomTeacher(teacherId, classId);
-    if (!isHRT) {
-      throw new Error("Chỉ giáo viên chủ nhiệm mới có thể điểm danh lớp này");
-    }
+    if (!teacherId || !classId || !subjectId) return false;
 
-    // Lấy thông tin lớp và danh sách học sinh
-    const classRef = doc(db, "classes", classId);
-    const classSnap = await getDoc(classRef);
-
-    if (!classSnap.exists()) {
-      throw new Error("Không tìm thấy lớp học");
-    }
-
-    const classData = classSnap.data();
-    const studentIds = classData.students || [];
-
-    // Lấy thông tin chi tiết học sinh
-    const studentsPromises = studentIds.map(async (studentId) => {
-      const studentDoc = doc(db, "students", studentId);
-      const studentSnap = await getDoc(studentDoc);
-
-      if (studentSnap.exists()) {
-        return { id: studentId, ...studentSnap.data() };
-      }
-      return { id: studentId, name: "Không tìm thấy" };
-    });
-
-    const students = await Promise.all(studentsPromises);
-
-    // Lấy điểm danh hiện tại (nếu có)
-    const currentAttendance = await getStudentAttendanceByDate(
-      classId,
-      date,
-      teacherId
+    // đọc từ classAssignments
+    const qx = query(
+      collection(db, "classAssignments"),
+      where("type", "==", "teaching"),
+      where("status", "==", "active"),
+      where("teacherId", "==", String(teacherId)),
+      where("classId", "==", classId),
+      where("subjectId", "==", subjectId)
     );
-    const attendanceMap = {};
-    currentAttendance.forEach((record) => {
-      attendanceMap[record.studentId] = record;
-    });
-
-    // Kết hợp thông tin học sinh với trạng thái điểm danh
-    const studentsWithAttendance = students.map((student) => ({
-      ...student,
-      attendance: attendanceMap[student.id] || null,
-      status: attendanceMap[student.id]?.status || null,
-    }));
-
-    return {
-      classInfo: {
-        id: classId,
-        name: classData.name,
-        grade: classData.grade,
-        facility: classData.facility,
-      },
-      students: studentsWithAttendance,
-      date,
-      totalStudents: students.length,
-      markedCount: currentAttendance.length,
-    };
-  } catch (error) {
-    console.error("❌ Lỗi lấy danh sách học sinh điểm danh:", error);
-    throw error;
+    const snap = await getDocs(qx);
+    return !snap.empty;
+  } catch (err) {
+    console.error("Error in isTeacherAssignedToClassSubject:", err);
+    return false;
   }
 };
 
-// ==================== TEACHER ATTENDANCE ====================
+export const getAssignedSubjectsForTeacherInClass = async (
+  classId,
+  teacherId
+) => {
+  if (!classId || !teacherId) return [];
 
-/**
- * Lấy trạng thái điểm danh hôm nay của giáo viên
- * @param {string} teacherId - ID của giáo viên
- * @returns {Promise<Object>} - Trạng thái điểm danh hôm nay
- */
-export const getTeacherTodayStatus = async (teacherId) => {
-  try {
-    const today = new Date();
-    const dateString = today.toISOString().split("T")[0]; // YYYY-MM-DD
+  // 1) Lấy danh sách subjectId từ classAssignments (ACTIVE)
+  const qx = query(
+    collection(db, "classAssignments"),
+    where("type", "==", "teaching"),
+    where("status", "==", "active"),
+    where("classId", "==", classId),
+    where("teacherId", "==", String(teacherId))
+  );
+  const snap = await getDocs(qx);
+  const subjectIds = [
+    ...new Set(snap.docs.map((d) => d.data()?.subjectId).filter(Boolean)),
+  ];
+  if (subjectIds.length === 0) return [];
 
-    console.log("🔍 Getting teacher today status for:", {
-      teacherId,
-      date: dateString,
-    });
+  // 2) Batch fetch subjects theo nhóm 10 (giới hạn Firestore `in`)
+  const chunk = (arr, size) => {
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  };
 
-    const q = query(
-      collection(db, "teacher_attendance"),
-      where("teacherId", "==", teacherId),
-      where("date", "==", dateString)
+  const chunks = chunk(subjectIds, 10);
+  const subjects = [];
+
+  for (const ids of chunks) {
+    const qs = query(
+      collection(db, "subjects"),
+      where(documentId(), "in", ids)
     );
-
-    const querySnapshot = await getDocs(q);
-    const records = [];
-
-    querySnapshot.forEach((doc) => {
-      records.push({
-        id: doc.id,
-        ...doc.data(),
+    const ss = await getDocs(qs);
+    ss.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      subjects.push({
+        subjectId: docSnap.id,
+        subjectName: d.name || d.title || docSnap.id,
+        subjectCode: d.code || null,
+        shortName: d.shortName || d.abbr || null,
       });
     });
-
-    // Tìm check-in và check-out records
-    const checkInRecord = records.find((r) => r.type === "check_in");
-    const checkOutRecord = records.find((r) => r.type === "check_out");
-
-    const status = {
-      date: dateString,
-      hasCheckedIn: !!checkInRecord,
-      hasCheckedOut: !!checkOutRecord,
-      checkInTime: checkInRecord?.actualTime || null,
-      checkOutTime: checkOutRecord?.actualTime || null,
-      checkInStatus: checkInRecord?.status || null,
-      checkOutStatus: checkOutRecord?.status || null,
-      workingHours: checkOutRecord?.workingHours || 0,
-      totalRecords: records.length,
-      records: records.sort((a, b) => {
-        const timeA = new Date(
-          a.actualTime || a.timestamp?.toDate?.() || a.timestamp
-        );
-        const timeB = new Date(
-          b.actualTime || b.timestamp?.toDate?.() || b.timestamp
-        );
-        return timeA - timeB;
-      }),
-    };
-
-    console.log("✅ Teacher today status:", status);
-    return status;
-  } catch (error) {
-    console.error("❌ Error getting teacher today status:", error);
-    throw error;
   }
+
+  // 3) Giữ nguyên thứ tự theo subjectIds ban đầu (nếu muốn)
+  const index = new Map(subjectIds.map((id, i) => [id, i]));
+  subjects.sort(
+    (a, b) => (index.get(a.subjectId) ?? 0) - (index.get(b.subjectId) ?? 0)
+  );
+
+  return subjects;
+};
+
+// REPLACE: trả về danh sách lớp GV có thể điểm danh (GVCN + được phân công dạy) dựa trên classAssignments
+export const getClassesForTeacherAttendance = async (teacherId) => {
+  if (!teacherId) return [];
+  const tid = String(teacherId);
+
+  // 1) Lấy lớp chủ nhiệm
+  const hrSnap = await getDocs(
+    query(collection(db, "classes"), where("homeRoomTeacherId", "==", tid))
+  );
+  const homeroomClasses = hrSnap.docs.map((d) => ({
+    id: d.id,
+    ...d.data(),
+  }));
+
+  // 2) Lấy các assignment đang ACTIVE từ classAssignments theo teacherId
+  const assignSnap = await getDocs(
+    query(
+      collection(db, "classAssignments"),
+      where("type", "==", "teaching"),
+      where("status", "==", "active"),
+      where("teacherId", "==", tid)
+    )
+  );
+
+  // Gom subject theo classId
+  const subjectsByClass = new Map();
+  assignSnap.docs.forEach((docSnap) => {
+    const a = docSnap.data();
+    if (!a?.classId || !a?.subjectId) return;
+    if (!subjectsByClass.has(a.classId))
+      subjectsByClass.set(a.classId, new Set());
+    subjectsByClass.get(a.classId).add(a.subjectId);
+  });
+
+  // 3) Lấy thông tin lớp cho các classId từ assignments
+  const teachingClassIds = Array.from(subjectsByClass.keys());
+
+  // loại các lớp đã là GVCN (tránh trùng)
+  const hrSet = new Set(homeroomClasses.map((c) => c.id));
+  const teachingOnlyIds = teachingClassIds.filter((id) => !hrSet.has(id));
+
+  // fetch từng lớp (đỡ giới hạn where in 10 phần tử)
+  const teachingClasses = [];
+  for (const cid of teachingOnlyIds) {
+    const cSnap = await getDoc(doc(db, "classes", cid));
+    if (cSnap.exists()) teachingClasses.push({ id: cSnap.id, ...cSnap.data() });
+  }
+
+  // 4) Chuẩn hóa output
+  const result = [];
+
+  // homeroom
+  homeroomClasses.forEach((c) => {
+    result.push({
+      id: c.id,
+      name: c.name || c.id,
+      grade: c.grade || "",
+      facility: c.facility || "",
+      isHomeRoom: true,
+      assignedSubjects: Array.from(subjectsByClass.get(c.id) || []), // nếu GV vừa là GVCN vừa dạy
+      studentCount: Array.isArray(c.students)
+        ? c.students.length
+        : c.studentCount || 0,
+    });
+  });
+
+  // teaching (không phải GVCN)
+  teachingClasses.forEach((c) => {
+    result.push({
+      id: c.id,
+      name: c.name || c.id,
+      grade: c.grade || "",
+      facility: c.facility || "",
+      isHomeRoom: false,
+      assignedSubjects: Array.from(subjectsByClass.get(c.id) || []),
+      studentCount: Array.isArray(c.students)
+        ? c.students.length
+        : c.studentCount || 0,
+    });
+  });
+
+  return result;
+};
+
+const _fmtDate = (d) => {
+  const dt = d instanceof Date ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 };
 
 /**
- * Check-in giáo viên
- * @param {string} teacherId - ID của giáo viên
- * @param {string} note - Ghi chú (optional)
- * @returns {Promise<Object>} - Kết quả check-in
+ * Check-in giáo viên (tạo/ghi record theo ngày).
+ * Trả về bản ghi sau check-in.
  */
-export const teacherCheckIn = async (teacherId, note = "") => {
-  try {
-    const now = new Date();
-    const dateString = now.toISOString().split("T")[0]; // YYYY-MM-DD
-    const timeString = now.toTimeString().split(" ")[0]; // HH:MM:SS
-    const timestamp = Timestamp.now();
+export const teacherCheckIn = async (teacherId, payload = {}) => {
+  if (!teacherId) throw new Error("teacherId is required");
+  const today = _fmtDate(new Date());
+  const docId = `${teacherId}_${today}`;
+  const ref = doc(db, "teacher_attendance", docId);
 
-    console.log("⏰ Teacher checking in:", {
-      teacherId,
-      date: dateString,
-      time: timeString,
-    });
+  const snap = await getDoc(ref);
+  const base = snap.exists() ? snap.data() : {};
 
-    // Kiểm tra xem đã check-in hôm nay chưa
-    const existingCheckIn = query(
+  const data = {
+    teacherId,
+    date: today,
+    checkInAt: Timestamp.now(),
+    checkInNote: payload.note || base.checkInNote || "",
+    status: "checked_in",
+    createdAt: base.createdAt || Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  };
+
+  await setDoc(ref, { ...base, ...data });
+  const after = await getDoc(ref);
+  return { id: ref.id, ...after.data() };
+};
+
+/**
+ * Check-out giáo viên (cập nhật record trong ngày).
+ * Trả về bản ghi sau check-out.
+ */
+export const teacherCheckOut = async (teacherId, payload = {}) => {
+  if (!teacherId) throw new Error("teacherId is required");
+  const today = _fmtDate(new Date());
+  const ref = doc(db, "teacher_attendance", `${teacherId}_${today}`);
+
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error("Bạn chưa check-in hôm nay.");
+  }
+
+  const data = {
+    checkOutAt: Timestamp.now(),
+    checkOutNote: payload.note || "",
+    status: "checked_out",
+    updatedAt: Timestamp.now(),
+  };
+
+  await updateDoc(ref, data);
+  const after = await getDoc(ref);
+  return { id: ref.id, ...after.data() };
+};
+
+/**
+ * Trạng thái hôm nay của giáo viên (not_checked_in | checked_in | checked_out)
+ */
+export const getTeacherTodayStatus = async (teacherId) => {
+  if (!teacherId) return { status: "not_checked_in" };
+  const today = _fmtDate(new Date());
+  const ref = doc(db, "teacher_attendance", `${teacherId}_${today}`);
+  const snap = await getDoc(ref);
+
+  if (!snap.exists()) return { status: "not_checked_in" };
+
+  const rec = snap.data();
+  if (rec?.status === "checked_out")
+    return { status: "checked_out", record: rec };
+  if (rec?.status === "checked_in")
+    return { status: "checked_in", record: rec };
+  return { status: "not_checked_in", record: rec };
+};
+
+/**
+ * Lấy thống kê điểm danh theo tháng (số ngày check-in, check-out, chưa check-in)
+ */
+export const getTeacherAttendanceStats = async (teacherId, month, year) => {
+  if (!teacherId || !month || !year) {
+    throw new Error("teacherId, month, year are required");
+  }
+  const start = `${year}-${String(month).padStart(2, "0")}-01`;
+  const end = `${year}-${String(month).padStart(2, "0")}-31`;
+
+  const qSnap = await getDocs(
+    query(
       collection(db, "teacher_attendance"),
       where("teacherId", "==", teacherId),
-      where("date", "==", dateString),
-      where("type", "==", "check_in")
-    );
+      where("date", ">=", start),
+      where("date", "<=", end)
+    )
+  );
 
-    const existingSnapshot = await getDocs(existingCheckIn);
-    if (!existingSnapshot.empty) {
-      throw new Error("Bạn đã check-in hôm nay rồi!");
-    }
+  let checkedIn = 0;
+  let checkedOut = 0;
+  let days = new Set();
 
-    // Xác định trạng thái dựa trên giờ check-in
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    const currentTime = hour * 60 + minute; // Convert to minutes
-    const standardStartTime = 7 * 60 + 30; // 7:30 AM in minutes
-    const lateThreshold = 8 * 60; // 8:00 AM in minutes
+  qSnap.forEach((d) => {
+    const rec = d.data();
+    days.add(rec.date);
+    if (rec.status === "checked_in") checkedIn += 1;
+    if (rec.status === "checked_out") checkedOut += 1;
+  });
 
-    let status = "present";
-    if (currentTime > lateThreshold) {
-      status = "late";
-    }
+  // “not_checked_in” = tổng số ngày có lịch làm mà chưa check-in (nếu cần có lịch).
+  // Ở đây tạm hiểu theo dữ liệu hiện có: không có record -> chưa check-in.
+  // Ta ước lượng bằng tổng ngày có bản ghi (unique dates) để xuất tỷ lệ tương đối.
+  const totalRecordedDays = days.size;
+  const notCheckedIn = Math.max(
+    0,
+    totalRecordedDays - (checkedIn + checkedOut)
+  );
 
-    const attendanceId = `${teacherId}_${dateString}_checkin`;
-
-    const checkInData = {
-      teacherId,
-      date: dateString,
-      type: "check_in",
-      actualTime: now.toISOString(),
-      expectedTime: `${dateString}T07:30:00.000Z`,
-      status,
-      note,
-      timestamp,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      isLate: status === "late",
-      minutesLate:
-        status === "late" ? Math.max(0, currentTime - standardStartTime) : 0,
-    };
-
-    await setDoc(doc(db, "teacher_attendance", attendanceId), checkInData);
-
-    console.log("✅ Teacher check-in successful:", {
-      teacherId,
-      date: dateString,
-      time: timeString,
-      status,
-      isLate: status === "late",
-    });
-
-    return {
-      success: true,
-      data: checkInData,
-      message:
-        status === "late" ? "Check-in thành công (Trễ)" : "Check-in thành công",
-    };
-  } catch (error) {
-    console.error("❌ Error teacher check-in:", error);
-    throw error;
-  }
+  return {
+    month,
+    year,
+    checkedIn,
+    checkedOut,
+    notCheckedIn,
+    totalRecordedDays,
+  };
 };
 
 /**
- * Check-out giáo viên
- * @param {string} teacherId - ID của giáo viên
- * @param {string} note - Ghi chú (optional)
- * @returns {Promise<Object>} - Kết quả check-out
- */
-export const teacherCheckOut = async (teacherId, note = "") => {
-  try {
-    const now = new Date();
-    const dateString = now.toISOString().split("T")[0]; // YYYY-MM-DD
-    const timeString = now.toTimeString().split(" ")[0]; // HH:MM:SS
-    const timestamp = Timestamp.now();
-
-    console.log("🏃 Teacher checking out:", {
-      teacherId,
-      date: dateString,
-      time: timeString,
-    });
-
-    // Kiểm tra xem đã check-out hôm nay chưa
-    const existingCheckOut = query(
-      collection(db, "teacher_attendance"),
-      where("teacherId", "==", teacherId),
-      where("date", "==", dateString),
-      where("type", "==", "check_out")
-    );
-
-    const existingSnapshot = await getDocs(existingCheckOut);
-    if (!existingSnapshot.empty) {
-      throw new Error("Bạn đã check-out hôm nay rồi!");
-    }
-
-    // Lấy thông tin check-in để tính giờ làm việc
-    const checkInQuery = query(
-      collection(db, "teacher_attendance"),
-      where("teacherId", "==", teacherId),
-      where("date", "==", dateString),
-      where("type", "==", "check_in")
-    );
-
-    const checkInSnapshot = await getDocs(checkInQuery);
-    let checkInTime = null;
-    let workingHours = 0;
-
-    if (!checkInSnapshot.empty) {
-      const checkInData = checkInSnapshot.docs[0].data();
-      checkInTime = new Date(checkInData.actualTime);
-      const workingMs = now.getTime() - checkInTime.getTime();
-      workingHours = Math.round((workingMs / (1000 * 60 * 60)) * 100) / 100; // Round to 2 decimal places
-    }
-
-    // Xác định trạng thái dựa trên giờ check-out
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    const currentTime = hour * 60 + minute; // Convert to minutes
-    const standardEndTime = 17 * 60; // 5:00 PM in minutes
-
-    let status = "present";
-    if (currentTime < standardEndTime) {
-      status = "early_leave";
-    }
-
-    const attendanceId = `${teacherId}_${dateString}_checkout`;
-
-    const checkOutData = {
-      teacherId,
-      date: dateString,
-      type: "check_out",
-      actualTime: now.toISOString(),
-      expectedTime: `${dateString}T17:00:00.000Z`,
-      status,
-      note,
-      timestamp,
-      checkInTime: checkInTime?.toISOString() || null,
-      workingHours,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      isEarlyLeave: status === "early_leave",
-    };
-
-    await setDoc(doc(db, "teacher_attendance", attendanceId), checkOutData);
-
-    console.log("✅ Teacher check-out successful:", {
-      teacherId,
-      date: dateString,
-      time: timeString,
-      status,
-      workingHours,
-      isEarlyLeave: status === "early_leave",
-    });
-
-    return {
-      success: true,
-      data: checkOutData,
-      workingHours,
-      message:
-        status === "early_leave"
-          ? "Check-out thành công (Ra sớm)"
-          : "Check-out thành công",
-    };
-  } catch (error) {
-    console.error("❌ Error teacher check-out:", error);
-    throw error;
-  }
-};
-
-/**
- * Điểm danh giáo viên cho giờ dạy
- * @param {string} teacherId - ID của giáo viên
- * @param {string} classId - ID của lớp
- * @param {string} subject - Môn học
- * @param {string} timeSlot - Tiết học (VD: "Tiết 1", "Tiết 2")
- * @param {string} status - Trạng thái: 'present', 'absent', 'late', 'substitute'
- * @param {string} note - Ghi chú
- */
-export const markTeacherAttendance = async (
-  teacherId,
-  classId,
-  subject,
-  timeSlot,
-  status,
-  note = ""
-) => {
-  try {
-    const today = new Date();
-    const dateString = today.toISOString().split("T")[0]; // YYYY-MM-DD
-    const timestamp = Timestamp.now();
-
-    const attendanceId = `${teacherId}_${classId}_${dateString}_${timeSlot}`;
-
-    const attendanceData = {
-      teacherId,
-      classId,
-      subject,
-      timeSlot,
-      date: dateString,
-      timestamp,
-      status, // 'present', 'absent', 'late', 'substitute'
-      note,
-      clockInTime: status === "present" || status === "late" ? timestamp : null,
-      markedAt: timestamp,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      type: "teaching_session", // Phân biệt với check-in/check-out
-    };
-
-    await setDoc(doc(db, "teacher_attendance", attendanceId), attendanceData);
-
-    console.log("✅ Điểm danh giáo viên thành công:", {
-      teacherId,
-      classId,
-      subject,
-      timeSlot,
-      status,
-      date: dateString,
-    });
-
-    return {
-      success: true,
-      attendanceId,
-      data: attendanceData,
-    };
-  } catch (error) {
-    console.error("❌ Lỗi điểm danh giáo viên:", error);
-    throw error;
-  }
-};
-
-/**
- * Lấy điểm danh giáo viên theo khoảng thời gian - V2 tương thích với UI
- * @param {string} teacherId - ID của giáo viên
- * @param {string} startDate - Ngày bắt đầu (YYYY-MM-DD)
- * @param {string} endDate - Ngày kết thúc (YYYY-MM-DD)
+ * Lấy bản ghi điểm danh theo khoảng ngày
+ * Trả về danh sách sort theo date tăng dần
  */
 export const getTeacherAttendanceByDateRange = async (
   teacherId,
   startDate,
   endDate
 ) => {
-  try {
-    // Lấy dữ liệu attendance từ collection teacher_attendance
-    const q = query(
+  if (!teacherId || !startDate || !endDate) {
+    throw new Error("teacherId, startDate, endDate are required");
+  }
+
+  const qSnap = await getDocs(
+    query(
       collection(db, "teacher_attendance"),
       where("teacherId", "==", teacherId),
       where("date", ">=", startDate),
       where("date", "<=", endDate)
-    );
+    )
+  );
 
-    const querySnapshot = await getDocs(q);
-    const attendanceData = {};
+  const items = [];
+  qSnap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+  items.sort((a, b) => new Date(a.date) - new Date(b.date));
+  return items;
+};
+// ==================== STUDENT ATTENDANCE (ADD BACK) ====================
 
-    // Nhóm records theo ngày
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      const date = data.date;
+const _ymd = (d) => {
+  const dt = d instanceof Date ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
 
-      if (!attendanceData[date]) {
-        attendanceData[date] = {
-          date,
-          checkInData: null,
-          checkOutData: null,
-        };
-      }
-
-      if (data.type === "check_in") {
-        attendanceData[date].checkInData = {
-          actualTime: data.actualTime,
-          status: data.status,
-          note: data.note,
-        };
-      } else if (data.type === "check_out") {
-        attendanceData[date].checkOutData = {
-          actualTime: data.actualTime,
-          status: data.status,
-          note: data.note,
-          workingHours: data.workingHours,
-        };
-      }
-    });
-
-    // Convert thành array và sắp xếp
-    const attendanceList = Object.values(attendanceData).sort(
-      (a, b) => new Date(b.date) - new Date(a.date)
-    );
-
-    return attendanceList;
-  } catch (error) {
-    console.error("❌ Error getting teacher attendance range:", error);
-    throw error;
-  }
+// (private) Lấy bản ghi điểm danh 1 ngày cho 1 lớp; non-HRT có thể lọc theo subjectId
+const _getStudentAttendanceByDate = async (classId, date, subjectId = null) => {
+  const qAtt = query(
+    collection(db, "student_attendance"),
+    where("classId", "==", classId),
+    where("date", "==", date)
+  );
+  const snap = await getDocs(qAtt);
+  const list = [];
+  snap.forEach((d) => {
+    const rec = d.data();
+    if (subjectId && rec.subjectId && rec.subjectId !== subjectId) return;
+    list.push({ id: d.id, ...rec });
+  });
+  return list;
 };
 
 /**
- * Lấy thống kê điểm danh giáo viên - V2 tương thích với UI
- * @param {string} teacherId - ID giáo viên
- * @param {string} startDate - Ngày bắt đầu
- * @param {string} endDate - Ngày kết thúc
+ * Cho phép non-HRT lấy danh sách học sinh nếu có subjectId hợp lệ.
+ * Trả về: { classInfo, students:[{... , attendance?, status?}], date, ... }
  */
-export const getTeacherAttendanceStats = async (
+export const getHomeRoomStudentsForAttendance = async (
+  classId,
   teacherId,
-  startDate,
-  endDate
+  date,
+  subjectId = null
 ) => {
-  try {
-    console.log("🔍 Getting teacher attendance stats V2:", {
+  const day = _ymd(date || new Date());
+
+  // Quyền: GVCN hoặc giáo viên được phân công môn
+  const isHRT = await isHomeRoomTeacher(teacherId, classId);
+  if (!isHRT) {
+    if (!subjectId) throw new Error("Vui lòng chọn môn học để điểm danh.");
+    const ok = await isTeacherAssignedToClassSubject(
       teacherId,
-      startDate,
-      endDate,
-    });
-
-    // Lấy dữ liệu attendance từ collection mới
-    const q = query(
-      collection(db, "teacher_attendance"),
-      where("teacherId", "==", teacherId),
-      where("date", ">=", startDate),
-      where("date", "<=", endDate)
+      classId,
+      subjectId
     );
-
-    const querySnapshot = await getDocs(q);
-    const attendanceRecords = [];
-    const dailyAttendance = {};
-
-    // Group by date and type
-    querySnapshot.forEach((doc) => {
-      const record = doc.data();
-      const date = record.date;
-
-      if (!dailyAttendance[date]) {
-        dailyAttendance[date] = {
-          date,
-          hasCheckIn: false,
-          hasCheckOut: false,
-          status: "absent",
-          note: "",
-          subject: "",
-          timeSlot: "",
-        };
-      }
-
-      if (record.type === "check_in") {
-        dailyAttendance[date].hasCheckIn = true;
-        dailyAttendance[date].status = record.status || "present";
-        dailyAttendance[date].note = record.note || "";
-      } else if (record.type === "check_out") {
-        dailyAttendance[date].hasCheckOut = true;
-      }
-
-      attendanceRecords.push({
-        id: doc.id,
-        ...record,
-      });
-    });
-
-    // Calculate stats
-    const dailyRecords = Object.values(dailyAttendance);
-    const stats = {
-      totalSessions: dailyRecords.length,
-      present: 0,
-      absent: 0,
-      late: 0,
-      substitute: 0,
-      attendanceRate: 0,
-      totalHoursWorked: 0,
-    };
-
-    dailyRecords.forEach((record) => {
-      if (record.hasCheckIn) {
-        stats[record.status]++;
-        // Ước tính 8 giờ làm việc mỗi ngày có mặt
-        stats.totalHoursWorked += 8;
-      } else {
-        stats.absent++;
-      }
-    });
-
-    // Calculate attendance rate
-    if (stats.totalSessions > 0) {
-      stats.attendanceRate = (
-        ((stats.present + stats.late) / stats.totalSessions) *
-        100
-      ).toFixed(2);
-    }
-
-    // Sort records by date (newest first)
-    const sortedRecords = dailyRecords.sort(
-      (a, b) => new Date(b.date) - new Date(a.date)
-    );
-
-    console.log("✅ Teacher attendance stats V2:", {
-      teacherId,
-      totalSessions: stats.totalSessions,
-      present: stats.present,
-      attendanceRate: stats.attendanceRate,
-    });
-
-    return {
-      records: sortedRecords,
-      stats,
-    };
-  } catch (error) {
-    console.error("❌ Error getting teacher attendance stats V2:", error);
-    throw error;
+    if (!ok) throw new Error("Bạn không được phân công dạy môn này trong lớp.");
   }
+
+  // Lấy thông tin lớp + danh sách học sinh
+  const classRef = doc(db, "classes", classId);
+  const classSnap = await getDoc(classRef);
+  if (!classSnap.exists()) throw new Error("Không tìm thấy lớp học");
+
+  const classData = classSnap.data();
+  const studentIds = Array.isArray(classData.students)
+    ? classData.students
+    : [];
+
+  const students = await Promise.all(
+    studentIds.map(async (sid) => {
+      const sSnap = await getDoc(doc(db, "students", sid));
+      return sSnap.exists()
+        ? { id: sid, ...sSnap.data() }
+        : { id: sid, name: "Không tìm thấy" };
+    })
+  );
+
+  // Lấy điểm danh hiện tại của ngày
+  const currentAttendance = await _getStudentAttendanceByDate(
+    classId,
+    day,
+    isHRT ? null : subjectId
+  );
+  const attMap = {};
+  currentAttendance.forEach((r) => (attMap[r.studentId] = r));
+
+  const studentsWithAttendance = students.map((s) => ({
+    ...s,
+    attendance: attMap[s.id] || null,
+    status: attMap[s.id]?.status || null, // present/absent/late/excused...
+  }));
+
+  return {
+    classInfo: {
+      id: classId,
+      name: classData.name,
+      grade: classData.grade,
+      facility: classData.facility,
+    },
+    students: studentsWithAttendance,
+    date: day,
+    totalStudents: students.length,
+    markedCount: currentAttendance.length,
+    isHomeRoomTeacher: isHRT,
+    subjectId: isHRT ? null : subjectId,
+  };
 };
 
 /**
- * Lấy điểm danh giáo viên theo ngày
- * @param {string} teacherId - ID của giáo viên
- * @param {string} date - Ngày (YYYY-MM-DD)
+ * Điểm danh 1 học sinh. Non-HRT bắt buộc có subjectId và phải được phân công.
+ * Tạo khóa: `${studentId}_${YYYY-MM-DD}` hoặc kèm `_${subjectId}` cho non-HRT.
  */
-export const getTeacherAttendanceByDate = async (teacherId, date) => {
-  try {
-    console.log("🔍 Getting teacher attendance for:", { teacherId, date });
-
-    // Simplify query to avoid composite index requirement
-    const q = query(
-      collection(db, "teacher_attendance"),
-      where("teacherId", "==", teacherId),
-      where("date", "==", date)
-      // Remove orderBy to avoid composite index requirement
-    );
-
-    const querySnapshot = await getDocs(q);
-    const attendanceList = [];
-
-    querySnapshot.forEach((doc) => {
-      attendanceList.push({
-        id: doc.id,
-        ...doc.data(),
-      });
-    });
-
-    // Sort in memory instead of using orderBy in query
-    attendanceList.sort((a, b) => {
-      const timestampA = a.timestamp?.toDate
-        ? a.timestamp.toDate()
-        : new Date(a.timestamp);
-      const timestampB = b.timestamp?.toDate
-        ? b.timestamp.toDate()
-        : new Date(b.timestamp);
-      return timestampA.getTime() - timestampB.getTime();
-    });
-
-    console.log("✅ Found attendance records:", attendanceList.length);
-    return attendanceList;
-  } catch (error) {
-    console.error("❌ Lỗi lấy điểm danh giáo viên:", error);
-    throw error;
+export const markStudentAttendance = async (
+  studentId,
+  classId,
+  teacherId,
+  status,
+  note = "",
+  subjectId = null
+) => {
+  if (!studentId || !classId || !teacherId || !status) {
+    throw new Error("studentId, classId, teacherId, status là bắt buộc");
   }
+
+  const isHRT = await isHomeRoomTeacher(teacherId, classId);
+  if (!isHRT) {
+    if (!subjectId) throw new Error("Vui lòng chọn môn học để điểm danh.");
+    const ok = await isTeacherAssignedToClassSubject(
+      teacherId,
+      classId,
+      subjectId
+    );
+    if (!ok) throw new Error("Bạn không được phân công dạy môn này trong lớp.");
+  }
+
+  const today = _ymd(new Date());
+  const attendanceId = `${studentId}_${today}${
+    !isHRT && subjectId ? "_" + subjectId : ""
+  }`;
+
+  const data = {
+    studentId,
+    classId,
+    teacherId,
+    date: today,
+    status, // present | absent | late | excused ...
+    note,
+    markedBy: teacherId,
+    markedAt: Timestamp.now(),
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+    isHomeRoomTeacher: isHRT,
+    subjectId: isHRT ? null : subjectId,
+  };
+
+  await setDoc(doc(db, "student_attendance", attendanceId), data);
+  return { success: true, attendanceId, data };
+};
+
+/**
+ * Điểm danh hàng loạt. Non-HRT truyền subjectId (chung) của tiết đang dạy.
+ * attendanceList: [{ studentId, status, note? }, ...]
+ */
+export const markBulkStudentAttendance = async (
+  attendanceList,
+  classId,
+  teacherId,
+  subjectId = null
+) => {
+  if (!Array.isArray(attendanceList) || attendanceList.length === 0) {
+    return { success: true, count: 0 };
+  }
+
+  const isHRT = await isHomeRoomTeacher(teacherId, classId);
+  if (!isHRT) {
+    if (!subjectId) throw new Error("Vui lòng chọn môn học để điểm danh.");
+    const ok = await isTeacherAssignedToClassSubject(
+      teacherId,
+      classId,
+      subjectId
+    );
+    if (!ok) throw new Error("Bạn không được phân công dạy môn này trong lớp.");
+  }
+
+  const tasks = attendanceList.map((a) =>
+    markStudentAttendance(
+      a.studentId,
+      classId,
+      teacherId,
+      a.status,
+      a.note || "",
+      isHRT ? null : subjectId
+    )
+  );
+  await Promise.all(tasks);
+  return { success: true, count: attendanceList.length };
 };

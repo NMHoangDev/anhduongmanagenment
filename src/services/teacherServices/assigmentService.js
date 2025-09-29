@@ -37,6 +37,14 @@ async function getClassDoc(classId) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
+// Helper: chuẩn hóa id từ nhiều kiểu field
+const normalizeId = (v) => {
+  if (!v) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "object") return v.id || v._id || v.teacherId || null;
+  return String(v);
+};
+
 /**
  * Check whether teacherId is allowed to manage assignments for classId
  * Updated: require BOTH being homeroom teacher AND listed in teachingAssignments
@@ -83,125 +91,87 @@ function fieldMatchesTeacher(field, teacherId) {
 
 export async function canManageClass(teacherId, classId) {
   console.debug("canManageClass called", { teacherId, classId });
-  if (!teacherId || !classId) {
-    console.debug("canManageClass -> missing param", { teacherId, classId });
-    return false;
-  }
+  const tid = String(teacherId || "");
+  if (!tid || !classId) return false;
+
   const cls = await getClassDoc(classId);
-  if (!cls) {
-    console.debug("canManageClass -> class not found", { classId });
-    return false;
-  }
-  console.debug("canManageClass -> class doc", { id: cls.id, name: cls.name });
+  if (!cls) return false;
 
-  // homeroom may be stored with several keys
-  const homeroomMatch =
-    fieldMatchesTeacher(cls.homeRoomTeacher, teacherId) ||
-    fieldMatchesTeacher(cls.homeRoomTeacherId, teacherId) ||
-    fieldMatchesTeacher(cls.homeroomTeacher, teacherId) ||
-    fieldMatchesTeacher(cls.teacher, teacherId) ||
-    fieldMatchesTeacher(cls.teacherId, teacherId);
+  const direct =
+    normalizeId(cls.teacher) === tid ||
+    normalizeId(cls.teacherId) === tid ||
+    normalizeId(cls.homeRoomTeacherId) === tid ||
+    normalizeId(cls.homeRoomTeacher) === tid;
 
-  const ta = cls.teachingAssignments || [];
-  const teachingMatch =
-    Array.isArray(ta) &&
-    ta.some((entry) => {
-      if (!entry) return false;
-      if (typeof entry === "string") return entry === teacherId;
-      if (fieldMatchesTeacher(entry.teacher, teacherId)) return true;
-      if (entry.teacherId === teacherId) return true;
-      if (
-        entry.teacherId &&
-        typeof entry.teacherId === "string" &&
-        entry.teacherId === teacherId
-      )
-        return true;
-      if (
-        entry.teacher &&
-        (entry.teacher === teacherId ||
-          (typeof entry.teacher === "object" &&
-            (entry.teacher.id === teacherId ||
-              entry.teacher._id === teacherId)))
-      )
-        return true;
-      return false;
-    });
+  const ta = Array.isArray(cls.teachingAssignments)
+    ? cls.teachingAssignments
+    : [];
+  const teach = ta.some((e) => {
+    if (!e) return false;
+    if (typeof e === "string") return e === tid;
+    return (
+      normalizeId(e.teacherId) === tid ||
+      normalizeId(e.teacher) === tid ||
+      normalizeId(e.id) === tid
+    );
+  });
 
-  console.debug("canManageClass matches", { homeroomMatch, teachingMatch });
-  // allow when teacher is homeroom OR teaching assignment
-  return Boolean(homeroomMatch || teachingMatch);
+  console.debug("canManageClass ->", { direct, teach, ok: direct || teach });
+  return direct || teach;
 }
 
 export async function getClassesForTeacher(teacherId) {
-  console.debug("getClassesForTeacher (simplified) called", { teacherId });
-  if (!teacherId) return [];
-  const tid = String(teacherId);
-
-  const ref = collection(db, "classes");
-  const snap = await getDocs(ref);
-  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  console.debug("getClassesForTeacher fetched:", rows.length);
-
-  const matched = rows.filter((cls) => {
-    // 1. Match trực tiếp các field teacher / homeroom
-    const directMatch =
-      fieldMatchesTeacher(cls.teacher, tid) ||
-      fieldMatchesTeacher(cls.teacherId, tid) ||
-      fieldMatchesTeacher(cls.homeRoomTeacherId, tid) ||
-      fieldMatchesTeacher(cls.homeRoomTeacher, tid);
-
-    // 2. Match trong teachingAssignments
-    const ta = Array.isArray(cls.teachingAssignments)
-      ? cls.teachingAssignments
-      : [];
-    const teachingMatch = ta.some((entry) => {
-      if (!entry) return false;
-      if (typeof entry === "string") return entry === tid;
-      if (typeof entry === "object") {
-        if (fieldMatchesTeacher(entry.teacherId, tid)) return true;
-        if (fieldMatchesTeacher(entry.teacher, tid)) return true;
-        if (fieldMatchesTeacher(entry.id, tid)) return true;
-      }
-      return false;
-    });
-
-    const ok = directMatch || teachingMatch;
-
-    console.debug("classCheck", {
-      classId: cls.id,
-      name: cls.name,
-      directMatch,
-      teachingMatch,
-      teacherField: cls.teacher,
-      teacherIdField: cls.teacherId,
-      homeRoomTeacherId: cls.homeRoomTeacherId,
-      teachingAssignmentsLen: ta.length,
-      matched: ok,
-    });
-
-    return ok;
+  console.debug("getClassesForTeacher (homeroom + teaching) called", {
+    teacherId,
   });
+  const tid = String(teacherId || "");
+  if (!tid) return [];
 
-  const result = matched.map((c) => ({
-    id: c.id,
-    name: c.name || c.id,
-    studentCount:
-      c.studentCount || (Array.isArray(c.students) ? c.students.length : 0),
-    raw: c,
-  }));
+  const snap = await getDocs(collection(db, "classes"));
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-  console.debug(
-    "getClassesForTeacher matched:",
-    result.length,
-    result.map((r) => r.id)
-  );
-  return result;
-}
+  const matched = rows
+    .filter((cls) => {
+      const direct =
+        normalizeId(cls.teacher) === tid ||
+        normalizeId(cls.teacherId) === tid ||
+        normalizeId(cls.homeRoomTeacherId) === tid ||
+        normalizeId(cls.homeRoomTeacher) === tid;
 
-// Nếu bạn vẫn gọi getClassesForTeacherV2 ở frontend, cho V2 dùng lại logic trên để tránh lệch
-export async function getClassesForTeacherV2(teacherId) {
-  // chỉ wrap lại để tương thích
-  return getClassesForTeacher(teacherId);
+      const ta = Array.isArray(cls.teachingAssignments)
+        ? cls.teachingAssignments
+        : [];
+      const teach = ta.some((e) => {
+        if (!e) return false;
+        if (typeof e === "string") return e === tid;
+        return (
+          normalizeId(e.teacherId) === tid ||
+          normalizeId(e.teacher) === tid ||
+          normalizeId(e.id) === tid
+        );
+      });
+
+      console.debug("classCheck", {
+        classId: cls.id,
+        name: cls.name,
+        direct,
+        teach,
+        matched: direct || teach,
+      });
+
+      return direct || teach;
+    })
+    .map((c) => ({
+      id: c.id,
+      name: c.name || c.id,
+      studentCount: Array.isArray(c.students)
+        ? c.students.length
+        : c.studentCount || 0,
+      raw: c,
+    }));
+
+  console.debug("getClassesForTeacher matched:", matched.length, matched);
+  return matched;
 }
 
 /* assignments API */
