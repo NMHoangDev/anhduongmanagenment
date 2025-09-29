@@ -16,7 +16,7 @@ import RegisterTest from "./RegisterTest";
 import Register from "./pages/Register";
 import TeacherClassManagement from "./pages/teacher/ClassManagement";
 import TeacherAssignment from "./pages/teacher/Assignment";
-import StudentAttendance from "./pages/teacher/StudentAttendance";
+import StudentAttendance from "./pages/teacher/StudentAttendanceNew";
 // Import demo users utility
 import "./utils/createDemoUsers";
 import TeacherAttendance from "./pages/teacher/TeacherAttendance";

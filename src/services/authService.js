@@ -7,6 +7,8 @@ import {
   updatePassword,
   reauthenticateWithCredential,
   EmailAuthProvider,
+  setPersistence,
+  browserLocalPersistence,
 } from "firebase/auth";
 import {
   doc,
@@ -19,15 +21,6 @@ import {
   addDoc,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
-
-/**
- * Service xử lý xác thực người dùng
- *
- * Behaviour:
- * - Nếu client có sessionToken hợp lệ (sessionStorage) và trùng với sessionToken trong users doc và chưa expiry => cho phép vào mà không cần sign-in lại.
- * - Ngược lại sẽ cố gắng signInWithEmailAndPassword (kiểm tra email/password). Nếu đúng => tạo mới sessionToken + sessionExpiry, lưu vào users doc và sessionStorage.
- * - Nếu sign-in sai => trả về lỗi.
- */
 
 // helper tạo token đơn giản
 function createSessionToken() {
@@ -43,24 +36,33 @@ export const loginUser = async (email, password) => {
     const normalizedEmail = String(email || "")
       .trim()
       .toLowerCase();
-    // tìm user doc theo email
+
+    // Optional: set auth persistence explicitly so session survives reloads
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+    } catch (pErr) {
+      console.warn("Could not set auth persistence:", pErr);
+      // continue anyway
+    }
+
+    // tìm user doc theo email (fallback nếu users doc id không là uid)
     const q = query(usersCol, where("email", "==", normalizedEmail));
     const snap = await getDocs(q);
-    const userDoc = snap.docs[0];
+    const userDoc = snap.docs[0]; // may be undefined
 
     // nếu client có token và userDoc tồn tại -> kiểm tra token/expiry
     const clientToken = sessionStorage.getItem("sessionToken") || null;
     if (userDoc) {
-      const userData = userDoc.data();
-      const expiry = userData.sessionExpiry
-        ? new Date(userData.sessionExpiry)
+      const userDataTmp = userDoc.data();
+      const expiry = userDataTmp.sessionExpiry
+        ? new Date(userDataTmp.sessionExpiry)
         : null;
       const now = new Date();
 
       if (
         clientToken &&
-        userData.sessionToken &&
-        clientToken === userData.sessionToken &&
+        userDataTmp.sessionToken &&
+        clientToken === userDataTmp.sessionToken &&
         expiry &&
         now < expiry
       ) {
@@ -68,9 +70,9 @@ export const loginUser = async (email, password) => {
         return {
           success: true,
           user: {
-            uid: userData.uid || userDoc.id,
-            email: userData.email,
-            ...userData,
+            uid: userDataTmp.uid || userDoc.id,
+            email: userDataTmp.email,
+            ...userDataTmp,
           },
         };
       }
@@ -84,12 +86,36 @@ export const loginUser = async (email, password) => {
     );
     const user = userCredential.user;
 
-    // lấy user doc theo uid (nếu query email không trả về)
-    const userRef = doc(db, "users", user.uid);
-    const snapUid = await getDoc(userRef);
+    // Tìm users doc theo uid; nếu không tồn tại fallback về userDoc (tìm theo email) hoặc tạo mới
+    let userRef = doc(db, "users", user.uid);
+    let snapUid = await getDoc(userRef);
+
+    if (!snapUid.exists()) {
+      if (userDoc) {
+        // fallback: dùng document tìm bằng email
+        userRef = doc(db, "users", userDoc.id);
+        snapUid = await getDoc(userRef);
+      } else {
+        // không tìm thấy users doc => tạo minimal user doc để gắn session
+        const minimal = {
+          uid: user.uid,
+          authUid: user.uid,
+          email: user.email || normalizedEmail,
+          name: user.email ? user.email.split("@")[0] : "",
+          role: "student",
+          createdAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+          isActive: true,
+        };
+        await setDoc(userRef, minimal, { merge: true });
+        snapUid = await getDoc(userRef);
+      }
+    }
+
     if (!snapUid.exists()) {
       throw new Error("Không tìm thấy thông tin người dùng trong hệ thống");
     }
+
     const userData = snapUid.data();
 
     // tạo token mới và expiry (vd: 2 ngày)
@@ -98,16 +124,22 @@ export const loginUser = async (email, password) => {
       Date.now() + 2 * 24 * 60 * 60 * 1000
     ).toISOString();
 
-    // cập nhật user doc (merge)
+    // cập nhật user doc (merge) — sử dụng userRef (đã fallback/created nếu cần)
     await setDoc(
       userRef,
       {
         sessionToken: token,
         sessionExpiry: newExpiry,
         lastUpdated: new Date().toISOString(),
+        uid: user.uid, // ensure uid field present
+        email: user.email || userData.email || normalizedEmail,
       },
       { merge: true }
     );
+
+    // lấy lại userData tươi
+    const freshSnap = await getDoc(userRef);
+    const freshData = freshSnap.exists() ? freshSnap.data() : {};
 
     // lưu token vào sessionStorage
     sessionStorage.setItem("sessionToken", token);
@@ -117,7 +149,7 @@ export const loginUser = async (email, password) => {
       user: {
         uid: user.uid,
         email: user.email,
-        ...userData,
+        ...freshData,
         sessionToken: token,
         sessionExpiry: newExpiry,
       },
@@ -134,7 +166,7 @@ export const loginUser = async (email, password) => {
       case "auth/wrong-password":
         errorMessage = "Mật khẩu không đúng";
         break;
-      case "auth/invalid-credential": // Firebase Web SDK v10+ common code for invalid email/password
+      case "auth/invalid-credential":
       case "auth/invalid-login-credentials":
         errorMessage = "Email hoặc mật khẩu không đúng";
         break;
@@ -183,29 +215,25 @@ export const registerUser = async (email, password, userData) => {
     const role = userData?.role || "student";
     const token = createSessionToken();
     const expiry = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+    const now = new Date().toISOString();
 
-    // Prepare a minimal users doc common fields
-    const baseUserDoc = {
+    // Prepare minimal users doc (only authentication / role / session)
+    const minimalUserDoc = {
       uid: user.uid,
       email: user.email,
-      name: userData.name || user.email.split("@")[0],
       role,
-      password, // lưu tạm (chú ý: chỉ dùng dev/test)
       sessionToken: token,
       sessionExpiry: expiry,
-      createdAt: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
+      createdAt: now,
+      lastUpdated: now,
       isActive: true,
     };
 
-    let userDocData = { ...baseUserDoc };
-
-    // Special handling by role
     if (role === "teacher") {
       // Save minimal user doc
-      await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
+      await setDoc(doc(db, "users", user.uid), minimalUserDoc, { merge: true });
 
-      // Create or update teachers/{uid}
+      // Create or update teachers/{uid} with profile details
       try {
         const teacherDocRef = doc(db, "teachers", user.uid);
         const teacherDocData = {
@@ -220,16 +248,28 @@ export const registerUser = async (email, password, userData) => {
           gender: userData.gender || "",
           facilityId: userData.facilityId || null,
           subjectIds: userData.subjectIds || [],
-          createdAt: new Date().toISOString(),
-          lastUpdated: new Date().toISOString(),
+          createdAt: now,
+          lastUpdated: now,
           isActive: true,
         };
         await setDoc(teacherDocRef, teacherDocData, { merge: true });
       } catch (teacherError) {
         console.error("Lỗi khi tạo document giáo viên:", teacherError);
       }
+
+      // store session token in sessionStorage
+      sessionStorage.setItem("sessionToken", token);
+
+      return {
+        success: true,
+        user: {
+          uid: user.uid,
+          email: user.email,
+          ...minimalUserDoc,
+        },
+      };
     } else if (role === "student") {
-      // Create students document with detailed student fields; store the student's document id in users.id
+      // Create students document with detailed student fields
       try {
         const studentsCol = collection(db, "students");
         const studentDocData = {
@@ -247,37 +287,53 @@ export const registerUser = async (email, password, userData) => {
             phoneNumber:
               userData.parentPhone || userData.parentPhoneNumber || "",
           },
-          createdAt: new Date().toISOString(),
-          lastUpdated: new Date().toISOString(),
+          extra: userData.extra || {}, // any other student-specific fields
+          createdAt: now,
+          lastUpdated: now,
           isActive: true,
         };
 
         const studentRef = await addDoc(studentsCol, studentDocData);
-        // attach student document id to users doc as `id`
-        userDocData.id = studentRef.id;
 
-        await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
+        // Attach reference to student document in users doc (minimal)
+        minimalUserDoc.studentId = studentRef.id;
+
+        await setDoc(doc(db, "users", user.uid), minimalUserDoc, {
+          merge: true,
+        });
       } catch (studentErr) {
         console.error("Lỗi khi tạo document student:", studentErr);
-        // still persist base user doc even if student doc creation fails
-        await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
+        // even if student doc creation fails, still persist minimal user doc
+        await setDoc(doc(db, "users", user.uid), minimalUserDoc, {
+          merge: true,
+        });
       }
+
+      // store session token in sessionStorage
+      sessionStorage.setItem("sessionToken", token);
+
+      return {
+        success: true,
+        user: {
+          uid: user.uid,
+          email: user.email,
+          ...minimalUserDoc,
+        },
+      };
     } else {
-      // default: save base user doc (for admin or other roles)
-      await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
+      // other roles: persist minimal user doc only
+      await setDoc(doc(db, "users", user.uid), minimalUserDoc, { merge: true });
+      sessionStorage.setItem("sessionToken", token);
+
+      return {
+        success: true,
+        user: {
+          uid: user.uid,
+          email: user.email,
+          ...minimalUserDoc,
+        },
+      };
     }
-
-    // lưu token vào sessionStorage
-    sessionStorage.setItem("sessionToken", userDocData.sessionToken);
-
-    return {
-      success: true,
-      user: {
-        uid: user.uid,
-        email: user.email,
-        ...userDocData,
-      },
-    };
   } catch (error) {
     console.error("Lỗi đăng ký:", error);
     let errorMessage = "Có lỗi xảy ra khi đăng ký";

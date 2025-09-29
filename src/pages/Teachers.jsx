@@ -9,7 +9,7 @@ import {
 } from "react-icons/fa";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
-import * as teacherService from "../services/teacherService";
+import * as teacherService from "../services/adminServices/teacherService";
 import {
   message,
   Modal,

@@ -16,7 +16,7 @@ import { UserOutlined, EditOutlined } from "@ant-design/icons";
 import {
   updateProfileForTeacher,
   updateAvatarForUid,
-} from "../../services/profileTeacherService";
+} from "../../services/teacherServices/profileTeacherService";
 import { useAuth } from "../../context/AuthContext";
 
 const { Option } = Select;

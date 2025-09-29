@@ -6,7 +6,7 @@ import {
   doc,
   getDoc,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db } from "../firebase";
 
 // Helper: Lấy tên lớp của học sinh từ collection classes
 async function getStudentClassName(studentId) {

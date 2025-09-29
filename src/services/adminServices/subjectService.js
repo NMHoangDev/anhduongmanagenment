@@ -10,7 +10,7 @@ import {
   getDoc,
   where,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db } from "../firebase";
 
 /**
  * Tạo mã môn học tự động từ tên môn học

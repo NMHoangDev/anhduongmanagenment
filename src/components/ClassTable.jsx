@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { FaEdit, FaTrash, FaUserGraduate } from "react-icons/fa";
+import { FaEdit, FaTrash, FaEye, FaUser, FaUserTie } from "react-icons/fa";
 
 export default function ClassTable({ classes, onEdit, onDelete, onView }) {
   const [openClass, setOpenClass] = useState(null);
@@ -16,8 +16,7 @@ export default function ClassTable({ classes, onEdit, onDelete, onView }) {
       <table
         style={{
           width: "100%",
-          borderCollapse: "separate",
-          borderSpacing: 0,
+          borderCollapse: "collapse",
           fontSize: "15px",
           background: "#f8fbff",
           borderRadius: "16px",
@@ -26,19 +25,74 @@ export default function ClassTable({ classes, onEdit, onDelete, onView }) {
         }}
       >
         <thead>
-          <tr>
-            <th style={thStyle}>Tên lớp</th>
-            <th style={thStyle}>Khối</th>
-            <th style={thStyle}>Giáo viên chủ nhiệm</th>
-            <th style={thStyle}>Số học sinh</th>
-            <th style={thStyle}>Hành động</th>
+          <tr style={{ background: "#f5f5f5" }}>
+            <th
+              style={{
+                padding: "12px",
+                textAlign: "left",
+                border: "1px solid #ddd",
+                minWidth: "120px",
+              }}
+            >
+              Tên lớp
+            </th>
+            <th
+              style={{
+                padding: "12px",
+                textAlign: "center",
+                border: "1px solid #ddd",
+                width: "80px",
+              }}
+            >
+              Khối
+            </th>
+            <th
+              style={{
+                padding: "12px",
+                textAlign: "left",
+                border: "1px solid #ddd",
+                minWidth: "150px",
+              }}
+            >
+              Giáo viên chủ nhiệm
+            </th>
+            <th
+              style={{
+                padding: "12px",
+                textAlign: "center",
+                border: "1px solid #ddd",
+                width: "100px",
+              }}
+            >
+              Số học sinh
+            </th>
+            <th
+              style={{
+                padding: "12px",
+                textAlign: "center",
+                border: "1px solid #ddd",
+                width: "120px",
+              }}
+            >
+              Cơ sở
+            </th>
+            <th
+              style={{
+                padding: "12px",
+                textAlign: "center",
+                border: "1px solid #ddd",
+                width: "150px",
+              }}
+            >
+              Hành động
+            </th>
           </tr>
         </thead>
         <tbody>
           {classes.length === 0 ? (
             <tr>
               <td
-                colSpan={5}
+                colSpan={6}
                 style={{
                   textAlign: "center",
                   padding: 32,
@@ -50,85 +104,185 @@ export default function ClassTable({ classes, onEdit, onDelete, onView }) {
               </td>
             </tr>
           ) : (
-            classes.map((cls) => (
+            classes.map((cls, index) => (
               <tr
                 key={cls.id}
                 style={{
-                  background: "#fff",
-                  borderBottom: "1px solid #e3eaf5",
-                  cursor: "pointer",
-                  transition: "background 0.2s, box-shadow 0.2s",
-                  boxShadow:
-                    openClass && openClass.id === cls.id
-                      ? "0 2px 12px rgba(0,123,255,0.08)"
-                      : "none",
+                  background: index % 2 === 0 ? "#fff" : "#f9f9f9",
+                  borderBottom: "1px solid #eee",
                 }}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.background = "#eaf4ff")
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.background =
-                    openClass && openClass.id === cls.id ? "#eaf4ff" : "#fff")
-                }
-                onClick={() => handleRowClick(cls)}
               >
-                <td style={tdStyle}>{cls.name}</td>
-                <td style={tdStyle}>{cls.grade}</td>
-                <td style={tdStyle}>
-                  {cls.teacher ? (
-                    cls.teacher.name || cls.teacher.id || "Chưa có thông tin"
-                  ) : (
-                    <span style={{ color: "#999", fontStyle: "italic" }}>
-                      Chưa có giáo viên
-                    </span>
-                  )}
-                </td>
-                <td style={{ ...tdStyle, fontWeight: 600, color: "#1976d2" }}>
-                  <FaUserGraduate style={{ marginRight: 6 }} />
-                  {cls.students ? cls.students.length : 0}
-                </td>
-                <td style={{ ...tdStyle, textAlign: "center" }}>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onEdit(cls);
-                    }}
+                <td style={{ padding: "12px", border: "1px solid #ddd" }}>
+                  <div
                     style={{
-                      background: "linear-gradient(90deg,#e3f0ff,#cce2ff)",
-                      border: "none",
-                      color: "#1976d2",
-                      cursor: "pointer",
-                      marginRight: 12,
-                      fontSize: "14px",
-                      fontWeight: "600",
-                      borderRadius: "6px",
-                      padding: "6px 16px",
-                      boxShadow: "0 2px 8px rgba(25,118,210,0.08)",
-                      transition: "background 0.2s",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
                     }}
                   >
-                    <FaEdit /> Sửa
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(cls.id);
-                    }}
+                    <FaUser style={{ color: "#666", fontSize: "14px" }} />
+                    <strong style={{ color: "#333" }}>{cls.name}</strong>
+                  </div>
+                </td>
+                <td
+                  style={{
+                    padding: "12px",
+                    border: "1px solid #ddd",
+                    textAlign: "center",
+                  }}
+                >
+                  <span
                     style={{
-                      background: "linear-gradient(90deg,#ffe3e3,#ffd6d6)",
-                      border: "none",
-                      color: "#f44336",
-                      cursor: "pointer",
-                      fontSize: "14px",
-                      fontWeight: "600",
-                      borderRadius: "6px",
-                      padding: "6px 16px",
-                      boxShadow: "0 2px 8px rgba(244,67,54,0.08)",
-                      transition: "background 0.2s",
+                      background: "#e6f7ff",
+                      color: "#1890ff",
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                      fontSize: "12px",
+                      fontWeight: "bold",
                     }}
                   >
-                    <FaTrash /> Xóa
-                  </button>
+                    {cls.grade}
+                  </span>
+                </td>
+                <td style={{ padding: "12px", border: "1px solid #ddd" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                    }}
+                  >
+                    <FaUserTie style={{ color: "#52c41a", fontSize: "14px" }} />
+                    {cls.homeRoomTeacher ? (
+                      <div>
+                        <div
+                          style={{
+                            fontWeight: "500",
+                            color: "#333",
+                          }}
+                        >
+                          {cls.homeRoomTeacher.name}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "12px",
+                            color: "#666",
+                          }}
+                        >
+                          {cls.homeRoomTeacher.email}
+                        </div>
+                      </div>
+                    ) : (
+                      <span
+                        style={{
+                          color: "#ff4d4f",
+                          fontStyle: "italic",
+                        }}
+                      >
+                        Chưa có giáo viên chủ nhiệm
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td
+                  style={{
+                    padding: "12px",
+                    border: "1px solid #ddd",
+                    textAlign: "center",
+                  }}
+                >
+                  <span
+                    style={{
+                      background: "#f6ffed",
+                      color: "#52c41a",
+                      padding: "4px 8px",
+                      borderRadius: "12px",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {cls.studentsDetails?.length || 0}
+                  </span>
+                </td>
+                <td
+                  style={{
+                    padding: "12px",
+                    border: "1px solid #ddd",
+                    textAlign: "center",
+                  }}
+                >
+                  {cls.facility}
+                </td>
+                <td
+                  style={{
+                    padding: "12px",
+                    border: "1px solid #ddd",
+                    textAlign: "center",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "8px",
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <button
+                      onClick={() => onView(cls)}
+                      style={{
+                        background: "#1890ff",
+                        color: "white",
+                        border: "none",
+                        padding: "6px 10px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                      }}
+                      title="Xem chi tiết"
+                    >
+                      <FaEye />
+                    </button>
+                    <button
+                      onClick={() => onEdit(cls)}
+                      style={{
+                        background: "#52c41a",
+                        color: "white",
+                        border: "none",
+                        padding: "6px 10px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                      }}
+                      title="Sửa thông tin"
+                    >
+                      <FaEdit />
+                    </button>
+                    <button
+                      onClick={() => onDelete(cls.id)}
+                      style={{
+                        background: "#ff4d4f",
+                        color: "white",
+                        border: "none",
+                        padding: "6px 10px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                      }}
+                      title="Xóa lớp học"
+                    >
+                      <FaTrash />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))
@@ -165,7 +319,14 @@ export default function ClassTable({ classes, onEdit, onDelete, onView }) {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ fontSize: 22, color: "#1976d2", marginBottom: 18 }}>
+            <h3
+              style={{
+                fontSize: 22,
+                color: "#1976d2",
+                marginBottom: 18,
+                textAlign: "center",
+              }}
+            >
               Danh sách học sinh lớp {openClass.name}
             </h3>
             <ul style={{ paddingLeft: 0, marginBottom: 0 }}>
@@ -240,22 +401,3 @@ export default function ClassTable({ classes, onEdit, onDelete, onView }) {
     </div>
   );
 }
-
-const thStyle = {
-  padding: "14px 18px",
-  textAlign: "left",
-  background: "linear-gradient(90deg,#e3f0ff,#f8fbff)",
-  color: "#1976d2",
-  fontWeight: "700",
-  fontSize: "16px",
-  borderBottom: "2px solid #e3eaf5",
-};
-
-const tdStyle = {
-  padding: "13px 18px",
-  textAlign: "left",
-  borderBottom: "1px solid #e3eaf5",
-  fontSize: "15px",
-  background: "none",
-  transition: "background 0.2s",
-};

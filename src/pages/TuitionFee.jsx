@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { InputNumber, Select, Button, message } from "antd";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
-import { getAllStudents } from "../services/studentService";
+import { getAllStudents } from "../services/adminServices/studentService";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../services/firebase";
 import dayjs from "dayjs";

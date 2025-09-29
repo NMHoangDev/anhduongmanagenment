@@ -5,7 +5,7 @@ import {
   createFacility,
   updateFacility,
   deleteFacility,
-} from "../services/facilitiesService";
+} from "../services/adminServices/facilitiesService";
 import {
   FaPlus,
   FaEdit,

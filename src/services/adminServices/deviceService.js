@@ -1,4 +1,4 @@
-import { db } from "./firebase";
+import { db } from "../firebase";
 import {
   collection,
   addDoc,
@@ -7,7 +7,7 @@ import {
   doc,
   updateDoc,
   deleteDoc,
-  Timestamp
+  Timestamp,
 } from "firebase/firestore";
 
 // Collection reference
@@ -17,10 +17,18 @@ const devicesCol = collection(db, "devices");
 export async function addDevice(device) {
   const docRef = await addDoc(devicesCol, {
     ...device,
-    purchaseDate: device.purchaseDate ? Timestamp.fromDate(new Date(device.purchaseDate)) : null,
-    warrantyExpiry: device.warrantyExpiry ? Timestamp.fromDate(new Date(device.warrantyExpiry)) : null,
-    lastMaintenanceDate: device.lastMaintenanceDate ? Timestamp.fromDate(new Date(device.lastMaintenanceDate)) : null,
-    nextMaintenanceDate: device.nextMaintenanceDate ? Timestamp.fromDate(new Date(device.nextMaintenanceDate)) : null,
+    purchaseDate: device.purchaseDate
+      ? Timestamp.fromDate(new Date(device.purchaseDate))
+      : null,
+    warrantyExpiry: device.warrantyExpiry
+      ? Timestamp.fromDate(new Date(device.warrantyExpiry))
+      : null,
+    lastMaintenanceDate: device.lastMaintenanceDate
+      ? Timestamp.fromDate(new Date(device.lastMaintenanceDate))
+      : null,
+    nextMaintenanceDate: device.nextMaintenanceDate
+      ? Timestamp.fromDate(new Date(device.nextMaintenanceDate))
+      : null,
   });
   return docRef.id;
 }
@@ -28,9 +36,9 @@ export async function addDevice(device) {
 // Lấy danh sách thiết bị
 export async function getDevices() {
   const querySnapshot = await getDocs(devicesCol);
-  return querySnapshot.docs.map(doc => ({
+  return querySnapshot.docs.map((doc) => ({
     id: doc.id,
-    ...doc.data()
+    ...doc.data(),
   }));
 }
 
@@ -50,10 +58,22 @@ export async function updateDevice(id, data) {
   const docRef = doc(db, "devices", id);
   // Chuyển đổi các trường ngày nếu có
   const updateData = { ...data };
-  if (updateData.purchaseDate) updateData.purchaseDate = Timestamp.fromDate(new Date(updateData.purchaseDate));
-  if (updateData.warrantyExpiry) updateData.warrantyExpiry = Timestamp.fromDate(new Date(updateData.warrantyExpiry));
-  if (updateData.lastMaintenanceDate) updateData.lastMaintenanceDate = Timestamp.fromDate(new Date(updateData.lastMaintenanceDate));
-  if (updateData.nextMaintenanceDate) updateData.nextMaintenanceDate = Timestamp.fromDate(new Date(updateData.nextMaintenanceDate));
+  if (updateData.purchaseDate)
+    updateData.purchaseDate = Timestamp.fromDate(
+      new Date(updateData.purchaseDate)
+    );
+  if (updateData.warrantyExpiry)
+    updateData.warrantyExpiry = Timestamp.fromDate(
+      new Date(updateData.warrantyExpiry)
+    );
+  if (updateData.lastMaintenanceDate)
+    updateData.lastMaintenanceDate = Timestamp.fromDate(
+      new Date(updateData.lastMaintenanceDate)
+    );
+  if (updateData.nextMaintenanceDate)
+    updateData.nextMaintenanceDate = Timestamp.fromDate(
+      new Date(updateData.nextMaintenanceDate)
+    );
   await updateDoc(docRef, updateData);
 }
 
@@ -61,4 +81,4 @@ export async function updateDevice(id, data) {
 export async function deleteDevice(id) {
   const docRef = doc(db, "devices", id);
   await deleteDoc(docRef);
-} 
+}

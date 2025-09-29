@@ -8,7 +8,7 @@ import {
   addDoc,
   updateDoc,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db } from "../firebase";
 
 /**
  * TimetableService V2 - Cấu trúc mới tối ưu cho CRUD và truy xuất

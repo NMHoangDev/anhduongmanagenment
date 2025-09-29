@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Card,
   Row,
@@ -19,9 +19,7 @@ import {
   Statistic,
   Tabs,
   Upload,
-  Switch,
   List,
-  Avatar,
   Divider,
   Popconfirm,
 } from "antd";
@@ -34,90 +32,169 @@ import {
   FaDownload,
   FaUpload,
   FaClock,
-  FaUsers,
   FaClipboardList,
-  FaChartLine,
   FaFileAlt,
   FaTasks,
   FaCheck,
   FaExclamationTriangle,
   FaPaperPlane,
-  FaCalendarAlt,
-  FaStar,
 } from "react-icons/fa";
 import dayjs from "dayjs";
+import * as assignmentService from "../../services/teacherServices/assigmentService";
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
 const { TabPane } = Tabs;
 
-const classes = [
-  { id: "1A", name: "Lớp 1A", studentCount: 30 },
-  { id: "2A", name: "Lớp 2A", studentCount: 32 },
-  { id: "3A", name: "Lớp 3A", studentCount: 28 },
-];
-
-const fakeAssignments = [
-  {
-    id: 1,
-    classId: "1A",
-    title: "Bài tập Toán tuần 1",
-    content: "Làm các bài tập từ 1 đến 10 trong sách giáo khoa",
-    subject: "Toán",
-    deadline: "2025-09-25",
-    createdAt: "2025-09-15",
-    status: "active",
-    totalStudents: 30,
-    submitted: 25,
-    graded: 20,
-    type: "homework",
-    difficulty: "medium",
-    attachments: [],
-  },
-  {
-    id: 2,
-    classId: "2A",
-    title: "Bài kiểm tra Văn giữa kì",
-    content: "Kiểm tra 15 phút về bài thơ Quê hương",
-    subject: "Văn",
-    deadline: "2025-09-26",
-    createdAt: "2025-09-14",
-    status: "active",
-    totalStudents: 32,
-    submitted: 30,
-    graded: 28,
-    type: "test",
-    difficulty: "hard",
-    attachments: ["test_questions.pdf"],
-  },
-  {
-    id: 3,
-    classId: "1A",
-    title: "Thực hành Khoa học",
-    content: "Quan sát và mô tả các hiện tượng thiên nhiên",
-    subject: "Khoa học",
-    deadline: "2025-09-20",
-    createdAt: "2025-09-10",
-    status: "completed",
-    totalStudents: 30,
-    submitted: 30,
-    graded: 30,
-    type: "project",
-    difficulty: "easy",
-    attachments: [],
-  },
-];
-
 export default function TeacherAssignment() {
-  const [selectedClass, setSelectedClass] = useState(classes[0].id);
-  const [assignments, setAssignments] = useState(fakeAssignments);
+  // safer teacherId resolution: try common localStorage shapes
+  let inferredTeacherId = null;
+  try {
+    const rawUser =
+      localStorage.getItem("user") ||
+      localStorage.getItem("authUser") ||
+      localStorage.getItem("teacher");
+    if (rawUser) {
+      const parsed = JSON.parse(rawUser);
+      inferredTeacherId =
+        parsed?.uid ||
+        parsed?.id ||
+        parsed?._id ||
+        parsed?.teacherId ||
+        parsed?.userId ||
+        null;
+    }
+  } catch (e) {
+    // ignore parse error
+  }
+  const teacherId =
+    inferredTeacherId ||
+    localStorage.getItem("teacherId") ||
+    localStorage.getItem("uid") ||
+    "teacher_demo";
+  // debug: show teacherId when loading classes
+  const [classes, setClasses] = useState([]);
+  const [selectedClass, setSelectedClass] = useState(null);
+  const [assignments, setAssignments] = useState([]);
+  const [loadingAssignments, setLoadingAssignments] = useState(false);
+  const [loadingClasses, setLoadingClasses] = useState(false);
+
   const [createModal, setCreateModal] = useState(false);
   const [editModal, setEditModal] = useState(false);
   const [viewModal, setViewModal] = useState(false);
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   const [activeTab, setActiveTab] = useState("all");
   const [form] = Form.useForm();
+
+  const loadClasses = useCallback(async () => {
+    setLoadingClasses(true);
+    console.debug("TeacherAssignment.loadClasses teacherId=", teacherId);
+    console.debug("localStorage keys:", {
+      teacherId: localStorage.getItem("teacherId"),
+      uid: localStorage.getItem("uid"),
+      user: localStorage.getItem("user"),
+      authUser: localStorage.getItem("authUser"),
+      teacher: localStorage.getItem("teacher"),
+    });
+    try {
+      // prefer new aggregated service; fallback to old if not exported
+      const fetchFn =
+        assignmentService.getClassesForTeacherV2 ||
+        assignmentService.getClassesForTeacher;
+      console.debug("Using class fetch function:", fetchFn.name);
+      const cls = await fetchFn(teacherId);
+      console.debug("classes from service (matched):", cls);
+      // detailed per-item raw info for debugging
+      if (Array.isArray(cls) && cls.length) {
+        console.table(
+          cls.map((c) => ({
+            id: c.id,
+            name: c.name || "-",
+            studentCount:
+              c.studentCount ??
+              c.totalStudents ??
+              (c.students || []).length ??
+              0,
+            raw: JSON.stringify(c.raw || c),
+          }))
+        );
+      } else {
+        console.warn("No classes matched for this teacherId");
+      }
+
+      if (Array.isArray(cls) && cls.length > 0) {
+        setClasses(
+          cls.map((c) => ({
+            id: c.id,
+            name: c.name || c.id,
+            studentCount:
+              c.studentCount ??
+              c.totalStudents ??
+              (c.students || []).length ??
+              0,
+          }))
+        );
+        setSelectedClass((prev) => (prev ? prev : cls[0].id));
+      } else {
+        setClasses([]);
+        setSelectedClass(null);
+      }
+    } catch (err) {
+      console.error("loadClasses error", err);
+      message.error({
+        content: err.message || "Lỗi khi tải danh sách lớp",
+        duration: 2,
+      });
+      setClasses([]);
+      setSelectedClass(null);
+    } finally {
+      setLoadingClasses(false);
+    }
+  }, [teacherId]);
+
+  const loadAssignments = useCallback(
+    async (classId) => {
+      if (!classId) {
+        setAssignments([]);
+        return;
+      }
+      setLoadingAssignments(true);
+      const hideLoading = message.loading("Đang tải bài tập...", 0);
+      try {
+        const list = await assignmentService.getAssignmentsByClass(
+          classId,
+          teacherId
+        );
+        const mapped = (list || []).map((a) => ({
+          ...a,
+          deadline: a.deadline ? dayjs(a.deadline).toISOString() : null,
+          createdAt: a.createdAt ? dayjs(a.createdAt).toISOString() : null,
+        }));
+        setAssignments(mapped);
+      } catch (err) {
+        console.error("loadAssignments error", err);
+        message.error({
+          content: err.message || "Không thể tải bài tập",
+          duration: 2,
+        });
+        setAssignments([]);
+      } finally {
+        hideLoading();
+        setLoadingAssignments(false);
+      }
+    },
+    [teacherId]
+  );
+
+  useEffect(() => {
+    loadClasses();
+  }, [loadClasses]);
+
+  useEffect(() => {
+    if (selectedClass) loadAssignments(selectedClass);
+    else setAssignments([]);
+  }, [selectedClass, loadAssignments]);
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -202,51 +279,76 @@ export default function TeacherAssignment() {
   };
 
   const handleCreateAssignment = async (values) => {
+    const hideLoading = message.loading("Đang tạo bài tập...", 0);
     try {
-      const newAssignment = {
-        id: assignments.length + 1,
-        classId: selectedClass,
+      const payload = {
         ...values,
-        createdAt: dayjs().format("YYYY-MM-DD"),
-        status: values.status || "active",
+        classId: selectedClass,
+        deadline: values.deadline ? values.deadline.toDate() : null,
+        attachments: values.attachments || [],
         totalStudents:
           classes.find((c) => c.id === selectedClass)?.studentCount || 0,
-        submitted: 0,
-        graded: 0,
-        attachments: values.attachments || [],
       };
-
-      setAssignments((prev) => [...prev, newAssignment]);
-      message.success("Tạo bài tập thành công!");
+      await assignmentService.createAssignment(teacherId, payload);
+      await loadAssignments(selectedClass);
+      hideLoading();
+      message.success({ content: "Tạo bài tập thành công!", duration: 2 });
       setCreateModal(false);
       form.resetFields();
     } catch (error) {
-      message.error("Lỗi khi tạo bài tập");
+      console.error("create assignment error", error);
+      hideLoading();
+      message.error({
+        content: error.message || "Lỗi khi tạo bài tập",
+        duration: 2,
+      });
     }
   };
 
   const handleEditAssignment = async (values) => {
+    if (!selectedAssignment) return;
+    const hideLoading = message.loading("Đang cập nhật bài tập...", 0);
     try {
-      setAssignments((prev) =>
-        prev.map((a) =>
-          a.id === selectedAssignment.id ? { ...a, ...values } : a
-        )
+      const payload = {
+        ...values,
+        deadline: values.deadline ? values.deadline.toDate() : undefined,
+        attachments: values.attachments || selectedAssignment.attachments || [],
+      };
+      await assignmentService.updateAssignment(
+        teacherId,
+        selectedAssignment.id,
+        payload
       );
-      message.success("Cập nhật bài tập thành công!");
+      await loadAssignments(selectedClass);
+      hideLoading();
+      message.success({ content: "Cập nhật bài tập thành công!", duration: 2 });
       setEditModal(false);
       setSelectedAssignment(null);
       form.resetFields();
     } catch (error) {
-      message.error("Lỗi khi cập nhật bài tập");
+      console.error("update assignment error", error);
+      hideLoading();
+      message.error({
+        content: error.message || "Lỗi khi cập nhật bài tập",
+        duration: 2,
+      });
     }
   };
 
   const handleDeleteAssignment = async (assignmentId) => {
+    const hideLoading = message.loading("Đang xóa bài tập...", 0);
     try {
+      await assignmentService.deleteAssignment(teacherId, assignmentId);
       setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
-      message.success("Xóa bài tập thành công!");
+      hideLoading();
+      message.success({ content: "Xóa bài tập thành công!", duration: 2 });
     } catch (error) {
-      message.error("Lỗi khi xóa bài tập");
+      console.error("delete assignment error", error);
+      hideLoading();
+      message.error({
+        content: error.message || "Lỗi khi xóa bài tập",
+        duration: 2,
+      });
     }
   };
 
@@ -329,7 +431,7 @@ export default function TeacherAssignment() {
       width: 100,
       render: (classId) => (
         <Tag color="blue" style={{ borderRadius: "12px", fontWeight: "500" }}>
-          {classes.find((c) => c.id === classId)?.name}
+          {classes.find((c) => c.id === classId)?.name || classId}
         </Tag>
       ),
     },
@@ -338,8 +440,11 @@ export default function TeacherAssignment() {
       key: "progress",
       width: 150,
       render: (_, record) => {
-        const submissionRate = (record.submitted / record.totalStudents) * 100;
-        const gradingRate = (record.graded / record.submitted) * 100;
+        const submissionRate =
+          (record.submitted / (record.totalStudents || 1)) * 100;
+        const gradingRate = record.submitted
+          ? (record.graded / record.submitted) * 100
+          : 0;
 
         return (
           <div>
@@ -356,10 +461,10 @@ export default function TeacherAssignment() {
             </div>
             <div>
               <Text style={{ fontSize: "12px", color: "#666" }}>
-                Chấm điểm: {record.graded}/{record.submitted}
+                Chấm điểm: {record.graded}/{record.submitted || 0}
               </Text>
               <Progress
-                percent={record.submitted > 0 ? gradingRate : 0}
+                percent={gradingRate}
                 size="small"
                 strokeColor="#52c41a"
                 showInfo={false}
@@ -441,7 +546,9 @@ export default function TeacherAssignment() {
                 setSelectedAssignment(record);
                 form.setFieldsValue({
                   ...record,
-                  deadline: dayjs(record.deadline),
+                  deadline: record.deadline
+                    ? dayjs(record.deadline)
+                    : undefined,
                 });
                 setEditModal(true);
               }}
@@ -469,6 +576,7 @@ export default function TeacherAssignment() {
   ];
 
   const getFilteredAssignments = () => {
+    if (!selectedClass) return [];
     let filtered = assignments.filter((a) => a.classId === selectedClass);
 
     switch (activeTab) {
@@ -486,6 +594,8 @@ export default function TeacherAssignment() {
   };
 
   const getClassStats = () => {
+    if (!selectedClass)
+      return { total: 0, active: 0, completed: 0, overdue: 0 };
     const classAssignments = assignments.filter(
       (a) => a.classId === selectedClass
     );
@@ -572,9 +682,11 @@ export default function TeacherAssignment() {
               <Select
                 value={selectedClass}
                 onChange={setSelectedClass}
-                style={{ width: 160 }}
+                style={{ width: 200 }}
                 size="large"
+                loading={loadingClasses}
                 dropdownStyle={{ borderRadius: "12px" }}
+                placeholder="Chưa có lớp"
               >
                 {classes.map((cls) => (
                   <Option key={cls.id} value={cls.id}>
@@ -645,11 +757,7 @@ export default function TeacherAssignment() {
                     <FaTasks />
                   </div>
                   <Text
-                    style={{
-                      fontSize: "14px",
-                      color: "#666",
-                      fontWeight: 500,
-                    }}
+                    style={{ fontSize: "14px", color: "#666", fontWeight: 500 }}
                   >
                     Tổng bài tập
                   </Text>
@@ -703,11 +811,7 @@ export default function TeacherAssignment() {
                     <FaCheck />
                   </div>
                   <Text
-                    style={{
-                      fontSize: "14px",
-                      color: "#666",
-                      fontWeight: 500,
-                    }}
+                    style={{ fontSize: "14px", color: "#666", fontWeight: 500 }}
                   >
                     Đã hoàn thành
                   </Text>
@@ -761,11 +865,7 @@ export default function TeacherAssignment() {
                     <FaClock />
                   </div>
                   <Text
-                    style={{
-                      fontSize: "14px",
-                      color: "#666",
-                      fontWeight: 500,
-                    }}
+                    style={{ fontSize: "14px", color: "#666", fontWeight: 500 }}
                   >
                     Đang diễn ra
                   </Text>
@@ -819,11 +919,7 @@ export default function TeacherAssignment() {
                     <FaExclamationTriangle />
                   </div>
                   <Text
-                    style={{
-                      fontSize: "14px",
-                      color: "#666",
-                      fontWeight: 500,
-                    }}
+                    style={{ fontSize: "14px", color: "#666", fontWeight: 500 }}
                   >
                     Quá hạn
                   </Text>
@@ -882,13 +978,14 @@ export default function TeacherAssignment() {
               <FaClipboardList />
             </div>
             Danh sách bài tập lớp{" "}
-            {classes.find((c) => c.id === selectedClass)?.name}
+            {classes.find((c) => c.id === selectedClass)?.name || "-"}
           </Title>
           <Button
             type="primary"
             size="large"
             icon={<FaPlus />}
             onClick={() => setCreateModal(true)}
+            disabled={!selectedClass}
             style={{
               borderRadius: "12px",
               background: "linear-gradient(135deg, #52c41a, #73d13d)",
@@ -921,10 +1018,8 @@ export default function TeacherAssignment() {
           columns={columns}
           dataSource={getFilteredAssignments()}
           rowKey="id"
-          style={{
-            borderRadius: "12px",
-            overflow: "hidden",
-          }}
+          loading={loadingAssignments}
+          style={{ borderRadius: "12px", overflow: "hidden" }}
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
@@ -1146,7 +1241,7 @@ export default function TeacherAssignment() {
                     <Statistic
                       title="Đã chấm"
                       value={selectedAssignment.graded}
-                      suffix={`/${selectedAssignment.submitted}`}
+                      suffix={`/${selectedAssignment.submitted || 0}`}
                       valueStyle={{ color: "#52c41a" }}
                     />
                   </Card>
@@ -1242,7 +1337,7 @@ export default function TeacherAssignment() {
         )}
       </Modal>
 
-      {/* Edit Assignment Modal - Similar to Create Modal */}
+      {/* Edit Assignment Modal */}
       <Modal
         title={
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>

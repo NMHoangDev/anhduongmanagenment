@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { getClassTimetable } from "../../services/teacherService";
+import { getClassTimetable } from "../../services/adminServices/teacherService";
 
 export default function TimetableStudent() {
   const { currentUser } = useAuth();

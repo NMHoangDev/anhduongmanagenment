@@ -13,7 +13,7 @@ import {
   arrayUnion,
   arrayRemove,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db } from "../firebase";
 
 // Helper: normalize teacher document data to a predictable shape
 const normalizeTeacherData = (docSnapshot) => {
