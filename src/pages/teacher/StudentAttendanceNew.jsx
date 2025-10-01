@@ -12,6 +12,8 @@ import {
   Row,
   Col,
   Tag,
+  Tabs, // NEW
+  List, // NEW
 } from "antd";
 import {
   FaCheck,
@@ -26,10 +28,13 @@ import {
 import {
   markStudentAttendance,
   markBulkStudentAttendance,
-  getClassAttendanceOverview,
   getHomeRoomStudentsForAttendance,
   getClassesForTeacherAttendance,
   getAssignedSubjectsForTeacherInClass, // NEW
+  // Thêm mới các hàm thống kê
+  getDailySubjectAttendanceBreakdown,
+  getMonthlySubjectAttendanceCalendar,
+  getHomeroomMonthlyAbsenceDetails,
 } from "../../services/teacherServices/attendanceService";
 import { useAuth } from "../../context/AuthContext";
 import dayjs from "dayjs";
@@ -44,8 +49,14 @@ export default function StudentAttendance() {
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedDate, setSelectedDate] = useState(dayjs());
   const [attendanceData, setAttendanceData] = useState([]);
+  // Modal thống kê dùng dữ liệu sau
   const [statsVisible, setStatsVisible] = useState(false);
-  const [classStats, setClassStats] = useState(null);
+  // GV bộ môn
+  const [statsDailySubject, setStatsDailySubject] = useState(null); // {counts, studentsByStatus, ...}
+  const [statsMonthlySubject, setStatsMonthlySubject] = useState(null); // {days: [...]}
+  // GVCN
+  const [statsHomeroomMonthly, setStatsHomeroomMonthly] = useState(null); // {days, students, ...}
+  const [statsActiveTab, setStatsActiveTab] = useState("day"); // day | month | byDate | byStudent
 
   // NEW: trạng thái GVCN và môn được phân công (kèm name)
   const [isHomeRoom, setIsHomeRoom] = useState(false);
@@ -258,24 +269,83 @@ export default function StudentAttendance() {
     );
   };
 
+  // Gọi các service thống kê và mở modal
   const fetchClassStats = async () => {
     try {
-      if (!selectedClass) return;
+      if (!selectedClass || !currentUser?.uid) return;
+
       const month = selectedDate.month() + 1;
       const year = selectedDate.year();
-      const stats = await getClassAttendanceOverview(
-        selectedClass,
-        month,
-        year,
-        currentUser.uid
-      );
-      setClassStats(stats);
+
+      // Reset trước khi load
+      setStatsDailySubject(null);
+      setStatsMonthlySubject(null);
+      setStatsHomeroomMonthly(null);
+
+      if (isHomeRoom) {
+        // GVCN: xem thống kê toàn lớp theo tháng
+        const data = await getHomeroomMonthlyAbsenceDetails({
+          classId: selectedClass,
+          month,
+          year,
+          teacherId: currentUser.uid,
+        });
+        setStatsHomeroomMonthly(data);
+        setStatsActiveTab("byDate");
+      } else {
+        // GV bộ môn: cần selectedSubjectId
+        const daily = await getDailySubjectAttendanceBreakdown({
+          classId: selectedClass,
+          subjectId: selectedSubjectId,
+          date: selectedDateStr, // YYYY-MM-DD
+          teacherId: currentUser.uid,
+        });
+        const monthly = await getMonthlySubjectAttendanceCalendar({
+          classId: selectedClass,
+          subjectId: selectedSubjectId,
+          month,
+          year,
+          teacherId: currentUser.uid,
+        });
+        setStatsDailySubject(daily);
+        setStatsMonthlySubject(monthly);
+        setStatsActiveTab("day");
+      }
+
       setStatsVisible(true);
     } catch (error) {
       console.error("Error fetching stats:", error);
-      message.error("Không thể tải thống kê");
+      message.error(error?.message || "Không thể tải thống kê");
     }
   };
+
+  // Helper render cho danh sách học sinh theo trạng thái
+  const renderStudentList = (students = []) => (
+    <List
+      size="small"
+      dataSource={students}
+      renderItem={(s) => (
+        <List.Item>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <Tag color="blue">{s.id}</Tag>
+            <span style={{ fontWeight: 500 }}>{s.name || "Không tên"}</span>
+            {s.note ? <Tag color="default">Ghi chú: {s.note}</Tag> : null}
+          </div>
+        </List.Item>
+      )}
+    />
+  );
+
+  // Helper render chips học sinh
+  const renderStudentChips = (students = []) => (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {students.map((s) => (
+        <Tag key={s.id} color="blue">
+          {s.name || s.id}
+        </Tag>
+      ))}
+    </div>
+  );
 
   const columns = [
     {
@@ -521,8 +591,10 @@ export default function StudentAttendance() {
               </Button>
               <Button
                 icon={<FaChartLine />}
-                onClick={fetchClassStats}
-                disabled={!selectedClass || !isHomeRoom}
+                onClick={async () => {
+                  await fetchClassStats();
+                }}
+                disabled={!selectedClass || (!isHomeRoom && !selectedSubjectId)}
               >
                 Thống kê
               </Button>
@@ -615,54 +687,302 @@ export default function StudentAttendance() {
 
       {/* Stats Modal */}
       <Modal
-        title="Thống kê điểm danh tháng"
+        title="Thống kê điểm danh"
         open={statsVisible}
         onCancel={() => setStatsVisible(false)}
         footer={null}
-        width={800}
+        width={900}
       >
-        {classStats && (
-          <div>
-            {classStats.map((dayStat) => (
-              <Card key={dayStat.date} size="small" style={{ marginBottom: 8 }}>
-                <Row gutter={16}>
-                  <Col span={6}>
-                    <strong>{dayjs(dayStat.date).format("DD/MM/YYYY")}</strong>
-                  </Col>
-                  <Col span={3}>
-                    <span style={{ color: "#52c41a" }}>
-                      Có mặt: {dayStat.present}
-                    </span>
-                  </Col>
-                  <Col span={3}>
-                    <span style={{ color: "#ff4d4f" }}>
-                      Vắng: {dayStat.absent}
-                    </span>
-                  </Col>
-                  <Col span={3}>
-                    <span style={{ color: "#faad14" }}>
-                      Muộn: {dayStat.late}
-                    </span>
-                  </Col>
-                  <Col span={3}>
-                    <span style={{ color: "#1890ff" }}>
-                      Có phép: {dayStat.excused}
-                    </span>
-                  </Col>
-                  <Col span={6}>
-                    <span>
-                      Tỷ lệ:{" "}
-                      {(
-                        ((dayStat.present + dayStat.late) / dayStat.total) *
-                        100
-                      ).toFixed(1)}
-                      %
-                    </span>
-                  </Col>
-                </Row>
-              </Card>
-            ))}
-          </div>
+        {/* GV bộ môn: Trong ngày / Trong tháng */}
+        {!isHomeRoom && (
+          <Tabs activeKey={statsActiveTab} onChange={setStatsActiveTab}>
+            <Tabs.TabPane tab="Trong ngày (GV bộ môn)" key="day">
+              {statsDailySubject ? (
+                <div>
+                  <Row gutter={12} style={{ marginBottom: 12 }}>
+                    <Col span={5}>
+                      <Card size="small">
+                        <Statistic
+                          title="Có mặt"
+                          value={statsDailySubject.counts.present}
+                          valueStyle={{ color: "#52c41a" }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col span={5}>
+                      <Card size="small">
+                        <Statistic
+                          title="Vắng"
+                          value={statsDailySubject.counts.absent}
+                          valueStyle={{ color: "#ff4d4f" }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col span={5}>
+                      <Card size="small">
+                        <Statistic
+                          title="Muộn"
+                          value={statsDailySubject.counts.late}
+                          valueStyle={{ color: "#faad14" }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col span={5}>
+                      <Card size="small">
+                        <Statistic
+                          title="Có phép"
+                          value={statsDailySubject.counts.excused}
+                          valueStyle={{ color: "#1890ff" }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col span={4}>
+                      <Card size="small">
+                        <Statistic
+                          title="Đã chấm"
+                          value={statsDailySubject.totalMarked}
+                        />
+                      </Card>
+                    </Col>
+                  </Row>
+
+                  <Row gutter={16}>
+                    <Col span={12}>
+                      <Card size="small" title="Vắng">
+                        {renderStudentList(
+                          statsDailySubject.studentsByStatus.absent
+                        )}
+                      </Card>
+                    </Col>
+                    <Col span={12}>
+                      <Card size="small" title="Đi muộn">
+                        {renderStudentList(
+                          statsDailySubject.studentsByStatus.late
+                        )}
+                      </Card>
+                    </Col>
+                  </Row>
+                  <Row gutter={16} style={{ marginTop: 12 }}>
+                    <Col span={12}>
+                      <Card size="small" title="Có phép">
+                        {renderStudentList(
+                          statsDailySubject.studentsByStatus.excused
+                        )}
+                      </Card>
+                    </Col>
+                    <Col span={12}>
+                      <Card size="small" title="Có mặt">
+                        {renderStudentList(
+                          statsDailySubject.studentsByStatus.present
+                        )}
+                      </Card>
+                    </Col>
+                  </Row>
+                </div>
+              ) : (
+                <div>Đang tải...</div>
+              )}
+            </Tabs.TabPane>
+
+            <Tabs.TabPane tab="Trong tháng (GV bộ môn)" key="month">
+              {statsMonthlySubject ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    maxHeight: 520,
+                    overflow: "auto",
+                  }}
+                >
+                  {(statsMonthlySubject.days || []).map((d) => (
+                    <Card key={d.date} size="small">
+                      <Row gutter={12} align="middle">
+                        <Col span={6}>
+                          <strong>{dayjs(d.date).format("DD/MM/YYYY")}</strong>
+                        </Col>
+                        <Col span={3}>
+                          <span style={{ color: "#52c41a" }}>
+                            Có mặt: {d.counts.present}
+                          </span>
+                        </Col>
+                        <Col span={3}>
+                          <span style={{ color: "#ff4d4f" }}>
+                            Vắng: {d.counts.absent}
+                          </span>
+                        </Col>
+                        <Col span={3}>
+                          <span style={{ color: "#faad14" }}>
+                            Muộn: {d.counts.late}
+                          </span>
+                        </Col>
+                        <Col span={3}>
+                          <span style={{ color: "#1890ff" }}>
+                            Có phép: {d.counts.excused}
+                          </span>
+                        </Col>
+                        <Col span={6} />
+                        <Col span={24} style={{ marginTop: 8 }}>
+                          {d.absent?.length ? (
+                            <div style={{ marginBottom: 6 }}>
+                              <strong>Học sinh vắng:</strong>{" "}
+                              {renderStudentChips(d.absent)}
+                            </div>
+                          ) : null}
+                          {d.late?.length ? (
+                            <div style={{ marginBottom: 6 }}>
+                              <strong>Học sinh đi muộn:</strong>{" "}
+                              {renderStudentChips(d.late)}
+                            </div>
+                          ) : null}
+                          {d.excused?.length ? (
+                            <div>
+                              <strong>Vắng có phép:</strong>{" "}
+                              {renderStudentChips(d.excused)}
+                            </div>
+                          ) : null}
+                        </Col>
+                      </Row>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <div>Đang tải...</div>
+              )}
+            </Tabs.TabPane>
+          </Tabs>
+        )}
+
+        {/* GVCN: Theo ngày / Theo học sinh */}
+        {isHomeRoom && (
+          <Tabs activeKey={statsActiveTab} onChange={setStatsActiveTab}>
+            <Tabs.TabPane tab="Theo ngày (GVCN)" key="byDate">
+              {statsHomeroomMonthly ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    maxHeight: 520,
+                    overflow: "auto",
+                  }}
+                >
+                  {(statsHomeroomMonthly.days || []).map((d) => (
+                    <Card key={d.date} size="small">
+                      <Row gutter={12} align="middle">
+                        <Col span={6}>
+                          <strong>{dayjs(d.date).format("DD/MM/YYYY")}</strong>
+                        </Col>
+                        <Col span={3}>
+                          <span style={{ color: "#52c41a" }}>
+                            Có mặt: {d.counts.present}
+                          </span>
+                        </Col>
+                        <Col span={3}>
+                          <span style={{ color: "#ff4d4f" }}>
+                            Vắng: {d.counts.absent}
+                          </span>
+                        </Col>
+                        <Col span={3}>
+                          <span style={{ color: "#faad14" }}>
+                            Muộn: {d.counts.late}
+                          </span>
+                        </Col>
+                        <Col span={3}>
+                          <span style={{ color: "#1890ff" }}>
+                            Có phép: {d.counts.excused}
+                          </span>
+                        </Col>
+                        <Col span={6} />
+                        <Col span={24} style={{ marginTop: 8 }}>
+                          {d.absent?.length ? (
+                            <div style={{ marginBottom: 6 }}>
+                              <strong>Học sinh vắng:</strong>{" "}
+                              {renderStudentChips(d.absent)}
+                            </div>
+                          ) : null}
+                          {d.late?.length ? (
+                            <div style={{ marginBottom: 6 }}>
+                              <strong>Học sinh đi muộn:</strong>{" "}
+                              {renderStudentChips(d.late)}
+                            </div>
+                          ) : null}
+                          {d.excused?.length ? (
+                            <div>
+                              <strong>Vắng có phép:</strong>{" "}
+                              {renderStudentChips(d.excused)}
+                            </div>
+                          ) : null}
+                        </Col>
+                      </Row>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <div>Đang tải...</div>
+              )}
+            </Tabs.TabPane>
+
+            <Tabs.TabPane tab="Theo học sinh (GVCN)" key="byStudent">
+              {statsHomeroomMonthly ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    maxHeight: 520,
+                    overflow: "auto",
+                  }}
+                >
+                  {(statsHomeroomMonthly.students || []).map((st) => (
+                    <Card
+                      key={st.student.id}
+                      size="small"
+                      title={`${st.student.name || st.student.id}`}
+                    >
+                      <Row gutter={[8, 8]}>
+                        <Col span={24}>
+                          <strong>Vắng:</strong>{" "}
+                          {st.absent?.length
+                            ? st.absent.map((a, idx) => (
+                                <Tag key={idx} color="red">
+                                  {dayjs(a.date).format("DD/MM")}{" "}
+                                  {a.subjectId ? `(${a.subjectId})` : ""}
+                                </Tag>
+                              ))
+                            : "—"}
+                        </Col>
+                        <Col span={24}>
+                          <strong>Muộn:</strong>{" "}
+                          {st.late?.length
+                            ? st.late.map((a, idx) => (
+                                <Tag key={idx} color="gold">
+                                  {dayjs(a.date).format("DD/MM")}{" "}
+                                  {a.subjectId ? `(${a.subjectId})` : ""}
+                                </Tag>
+                              ))
+                            : "—"}
+                        </Col>
+                        <Col span={24}>
+                          <strong>Có phép:</strong>{" "}
+                          {st.excused?.length
+                            ? st.excused.map((a, idx) => (
+                                <Tag key={idx} color="blue">
+                                  {dayjs(a.date).format("DD/MM")}{" "}
+                                  {a.subjectId ? `(${a.subjectId})` : ""}
+                                </Tag>
+                              ))
+                            : "—"}
+                        </Col>
+                      </Row>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <div>Đang tải...</div>
+              )}
+            </Tabs.TabPane>
+          </Tabs>
         )}
       </Modal>
     </div>

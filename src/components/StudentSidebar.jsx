@@ -44,8 +44,8 @@ const studentMenu = [
     icon: <FaClipboardList />,
   },
   {
-    label: "Thư viện tài liệu",
-    path: "/student/materials",
+    label: "Làm bài tập trắc nghiệm ",
+    path: "/student/submit-exam-test",
     icon: <FaBookOpen />,
   },
   { label: "Huy hiệu & BXH", path: "/student/badges", icon: <FaTrophy /> },
