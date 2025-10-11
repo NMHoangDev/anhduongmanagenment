@@ -38,6 +38,7 @@ import LearningPathPage from "./pages/student/LearningPathPage";
 import ContactBookPage from "./pages/student/ContactBookPage";
 import MaterialsPage from "./pages/student/MaterialsPage";
 import RatingPage from "./pages/student/RatingPage";
+import SubmitExamTestPage from "./pages/student/SubmitExamTestPage";
 
 function App() {
   return (
@@ -328,6 +329,14 @@ function App() {
             element={
               <ProtectedRoute studentOnly>
                 <LearningPathPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/student/submit-exam-test"
+            element={
+              <ProtectedRoute studentOnly>
+                <SubmitExamTestPage />
               </ProtectedRoute>
             }
           />

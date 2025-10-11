@@ -64,7 +64,16 @@ export default function Sidebar() {
     <aside className={styles.sidebar}>
       <div className={styles.logoBox}>
         <div className={styles.logoCircle}>
-          <span style={{ fontSize: 32, color: "#1a237e" }}>M</span>
+          <span
+            style={{
+              fontSize: 32,
+              color: "#ffffff",
+              fontWeight: "700",
+              textShadow: "0 2px 4px rgba(0,0,0,0.1)",
+            }}
+          >
+            A
+          </span>
         </div>
         <div className={styles.logoText}>Trung tâm Ánh Dương</div>
       </div>

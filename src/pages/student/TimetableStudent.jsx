@@ -1,381 +1,473 @@
-import React, { useState, useEffect } from "react";
+// ==========================
+// File: src/pages/student/TimetableStudent.jsx
+// ==========================
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  Card,
+  Row,
+  Col,
+  Button,
+  Typography,
+  Skeleton,
+  Space,
+  Tag,
+  Tooltip,
+  Avatar,
+  Empty,
+  message,
+  Divider,
+  Select,
+  InputNumber,
+} from "antd";
+import {
+  BookOutlined,
+  ClockCircleOutlined,
+  UserOutlined,
+  FilePdfOutlined,
+  SyncOutlined,
+  CalendarOutlined,
+} from "@ant-design/icons";
 import { useAuth } from "../../context/AuthContext";
-import { getClassTimetable } from "../../services/adminServices/teacherService";
+import {
+  getStudentWeekTimetable,
+  getStudentWeeks,
+  getTimetableStats,
+  buildSessionName, // ✅ cần export từ service
+} from "../../services/studentServices/timeTableService";
+
+const { Title, Text } = Typography;
+const { Option } = Select;
+
+// helper nhỏ: sort tiết trong ngày ưu tiên timeSlot rồi đến startTime
+const toMinutes = (t) => {
+  if (!t) return Number.MAX_SAFE_INTEGER;
+  const [h, m] = String(t).split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+};
+const sortLessonsInDay = (arr = []) =>
+  arr.slice().sort((a, b) => {
+    const aSlot = a.timeSlot ?? Number.MAX_SAFE_INTEGER;
+    const bSlot = b.timeSlot ?? Number.MAX_SAFE_INTEGER;
+    if (aSlot !== bSlot) return aSlot - bSlot;
+    return toMinutes(a.startTime) - toMinutes(b.startTime);
+  });
+
+const DAY_META = [
+  { key: "monday", label: "Thứ 2" },
+  { key: "tuesday", label: "Thứ 3" },
+  { key: "wednesday", label: "Thứ 4" },
+  { key: "thursday", label: "Thứ 5" },
+  { key: "friday", label: "Thứ 6" },
+  { key: "saturday", label: "Thứ 7" },
+];
 
 export default function TimetableStudent() {
   const { currentUser } = useAuth();
-  const [weeksData, setWeeksData] = useState([]);
-  const [selectedWeek, setSelectedWeek] = useState(null);
+  const studentId = currentUser?.id;
+
+  // ===== Session controls =====
+  const now = new Date();
+  const defaultYearFrom =
+    now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1; // >= Aug => SESSION 1
+  const [term, setTerm] = useState(now.getMonth() >= 7 ? 1 : 2); // Aug–Dec: 1, Jan–May: 2 (tuỳ rule bạn)
+  const [yearFrom, setYearFrom] = useState(defaultYearFrom);
+  const [yearTo, setYearTo] = useState(defaultYearFrom + 1);
+  const sessionName = buildSessionName(term, yearFrom, yearTo); // "SESSION 1 2024-2025"
+
+  const [groupedSchedule, setGroupedSchedule] = useState({});
   const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState(null);
+  const [studentInfo, setStudentInfo] = useState(null);
+  const [weeks, setWeeks] = useState([]);
+  const [selectedWeek, setSelectedWeek] = useState(null);
 
-  // For students, classId may be stored as classId or class in user doc
-  const classId = currentUser?.classId || currentUser?.class || "1";
-
+  // Khi đổi session => reset tuần
   useEffect(() => {
-    const fetchTimetable = async () => {
-      if (!classId) return;
+    setWeeks([]);
+    setSelectedWeek(null);
+    setGroupedSchedule({});
+    setStats(null);
+  }, [sessionName]);
+
+  /** === Load danh sách tuần theo session === */
+  useEffect(() => {
+    if (!studentId || !sessionName) return;
+    (async () => {
       setLoading(true);
       try {
-        const data = await getClassTimetable(`class_${classId}`);
-        // data expected: [{ id: weekId, schedule: { monday: [...], ... } }, ...]
-        setWeeksData(data || []);
-        if ((data || []).length > 0) {
-          // choose the first week returned as default (latest/current)
-          setSelectedWeek(data[0].id);
+        const weekList = await getStudentWeeks(studentId, sessionName); // ✅ truyền session
+        if (!weekList || weekList.length === 0) {
+          message.warning(
+            "Không tìm thấy tuần học nào cho học sinh trong kỳ đã chọn."
+          );
+          setWeeks([]);
+          setSelectedWeek(null);
+          return;
         }
+        setWeeks(weekList);
+        setSelectedWeek((prev) => prev || weekList[0]); // chọn tuần nhỏ nhất theo dữ liệu
       } catch (err) {
-        console.error("Lỗi khi lấy thời khoá biểu:", err);
+        console.error("Lỗi khi lấy danh sách tuần:", err);
+        message.error(err.message || "Không thể tải danh sách tuần");
       } finally {
         setLoading(false);
       }
-    };
+    })();
+  }, [studentId, sessionName]);
 
-    fetchTimetable();
-  }, [classId]);
+  /** === Khi week thay đổi thì lấy TKB + stats (trong session) === */
+  useEffect(() => {
+    if (studentId && selectedWeek && sessionName) {
+      fetchWeekTimetable();
+      fetchStats();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentId, selectedWeek, sessionName]);
 
-  // find schedule for selected week
-  const scheduleForWeek =
-    weeksData.find((w) => w.id === selectedWeek)?.schedule || {};
+  const fetchWeekTimetable = async () => {
+    if (!studentId || !selectedWeek || !sessionName) return;
+    setLoading(true);
+    try {
+      const data = await getStudentWeekTimetable(
+        studentId,
+        selectedWeek,
+        sessionName
+      ); // ✅ truyền session
 
-  const groupByDay = (scheduleObj) => {
-    const acc = {};
-    Object.entries(scheduleObj).forEach(([day, lessons]) => {
-      acc[day] = (lessons || []).slice().sort((a, b) => {
-        // sort by startTime if available (HH:MM)
-        const tA = a.startTime || "";
-        const tB = b.startTime || "";
-        return tA.localeCompare(tB);
+      if (data.message) {
+        message.warning(data.message);
+        setStudentInfo({ className: data.className, classId: data.classId });
+        setGroupedSchedule({});
+        return;
+      }
+
+      setStudentInfo({ className: data.className, classId: data.classId });
+
+      // sort theo ngày
+      const sorted = {};
+      Object.entries(data.schedule || {}).forEach(([day, lessons]) => {
+        sorted[day] = sortLessonsInDay([...(lessons || [])]);
       });
-    });
-    return acc;
+      setGroupedSchedule(sorted);
+    } catch (err) {
+      console.error("Lỗi khi lấy thời khóa biểu:", err);
+      message.error(err.message || "Không thể tải thời khóa biểu");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const groupedSchedule = groupByDay(scheduleForWeek);
-
-  const daysOfWeek = [
-    { key: "monday", label: "Thứ 2" },
-    { key: "tuesday", label: "Thứ 3" },
-    { key: "wednesday", label: "Thứ 4" },
-    { key: "thursday", label: "Thứ 5" },
-    { key: "friday", label: "Thứ 6" },
-    { key: "saturday", label: "Thứ 7" },
-  ];
-
-  const allLessonsThisWeek = Object.values(groupedSchedule).flat() || [];
-
-  const handlePrevWeek = () => {
-    if (!weeksData.length || !selectedWeek) return;
-    const idx = weeksData.findIndex((w) => w.id === selectedWeek);
-    if (idx < 0) return;
-    const next =
-      idx + 1 < weeksData.length ? weeksData[idx + 1] : weeksData[idx];
-    setSelectedWeek(next.id);
+  const fetchStats = async () => {
+    if (!studentId || !sessionName) return;
+    try {
+      const statsData = await getTimetableStats(studentId, sessionName); // ✅ truyền session
+      setStats(statsData);
+    } catch (err) {
+      console.error("Lỗi khi lấy thống kê:", err);
+    }
   };
 
-  const handleNextWeek = () => {
-    if (!weeksData.length || !selectedWeek) return;
-    const idx = weeksData.findIndex((w) => w.id === selectedWeek);
-    if (idx <= 0) return;
-    const next = weeksData[idx - 1];
-    setSelectedWeek(next.id);
+  const handleRefresh = async () => {
+    await fetchWeekTimetable();
+    await fetchStats();
+    message.success("Đã làm mới thời khóa biểu");
   };
+
+  const allLessons = useMemo(
+    () => Object.values(groupedSchedule).flat().filter(Boolean) || [],
+    [groupedSchedule]
+  );
+
+  /** === Card hiển thị 1 tiết học === */
+  const LessonCard = ({ lesson }) => (
+    <div
+      style={{
+        background: "linear-gradient(135deg, #1890ff 0%, #096dd9 100%)",
+        color: "#fff",
+        padding: "0.75rem",
+        marginBottom: "0.5rem",
+        borderRadius: "0.5rem",
+        boxShadow: "0 2px 8px rgba(24, 144, 255, 0.25)",
+        transition: "all 0.3s ease",
+      }}
+    >
+      <div style={{ fontWeight: 700, fontSize: "0.875rem" }}>
+        {lesson.subject || lesson.name || "—"}
+      </div>
+      <div style={{ fontSize: "0.75rem", opacity: 0.9, marginTop: "0.25rem" }}>
+        <ClockCircleOutlined /> {lesson.startTime} - {lesson.endTime}
+      </div>
+      {(lesson.teacher || lesson.room) && (
+        <div
+          style={{
+            fontSize: "0.75rem",
+            opacity: 0.85,
+            marginTop: "0.25rem",
+            display: "flex",
+            gap: "0.5rem",
+            flexWrap: "wrap",
+          }}
+        >
+          {lesson.teacher && (
+            <span
+              style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+            >
+              <UserOutlined /> {lesson.teacher}
+            </span>
+          )}
+          {lesson.room && <span>• Phòng: {lesson.room}</span>}
+        </div>
+      )}
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <div style={{ padding: "2rem", maxWidth: "1400px", margin: "0 auto" }}>
+        <Skeleton active />
+      </div>
+    );
+  }
 
   return (
-    <div style={{ padding: 24, minHeight: "100vh", background: "#f6f6fa" }}>
-      <div
+    <div
+      style={{
+        padding: "clamp(0.75rem, 3vw, 1.5rem)",
+        maxWidth: "1400px",
+        margin: "0 auto",
+        background: "#f5f7fa",
+        minHeight: "100vh",
+      }}
+    >
+      {/* Header */}
+      <div style={{ marginBottom: "clamp(1.5rem, 4vw, 2rem)" }}>
+        <Row justify="space-between" align="middle" gutter={[16, 16]}>
+          <Col xs={24} lg={16}>
+            <div style={{ marginBottom: "1rem" }}>
+              <Title
+                level={1}
+                style={{
+                  margin: 0,
+                  fontSize: "clamp(1.75rem, 5vw, 2.5rem)",
+                  background:
+                    "linear-gradient(135deg, #1890ff 0%, #096dd9 100%)",
+                  backgroundClip: "text",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  fontWeight: 700,
+                }}
+              >
+                Thời khóa biểu
+              </Title>
+              <Text type="secondary" style={{ fontSize: "1rem" }}>
+                Lịch học của lớp {studentInfo?.className || "—"}
+              </Text>
+            </div>
+          </Col>
+
+          {/* Chọn Session + tuần */}
+          <Col xs={24} lg={8}>
+            <Space style={{ width: "100%", justifyContent: "flex-end" }} wrap>
+              <Space.Compact>
+                <Select
+                  value={term}
+                  onChange={(v) => setTerm(v)}
+                  style={{ width: 130 }}
+                  options={[
+                    { value: 1, label: "SESSION 1" },
+                    { value: 2, label: "SESSION 2" },
+                  ]}
+                />
+                <InputNumber
+                  min={2000}
+                  max={3000}
+                  value={yearFrom}
+                  onChange={(v) => {
+                    const yf = Number(v || defaultYearFrom);
+                    setYearFrom(yf);
+                    setYearTo(yf + 1);
+                  }}
+                  style={{ width: 100 }}
+                  placeholder="Year from"
+                />
+                <InputNumber
+                  min={2001}
+                  max={3001}
+                  value={yearTo}
+                  onChange={(v) => setYearTo(Number(v || yearFrom + 1))}
+                  style={{ width: 100 }}
+                  placeholder="Year to"
+                />
+              </Space.Compact>
+              <Tag color="processing">{sessionName}</Tag>
+
+              <Tooltip title="Chọn tuần học">
+                <Select
+                  value={selectedWeek}
+                  onChange={(val) => setSelectedWeek(val)}
+                  style={{ width: 150 }}
+                  suffixIcon={<CalendarOutlined />}
+                  placeholder="Chọn tuần"
+                  disabled={!weeks.length}
+                >
+                  {weeks.map((w) => (
+                    <Option key={w} value={w}>
+                      {w.replace("W", "Tuần ")}
+                    </Option>
+                  ))}
+                </Select>
+              </Tooltip>
+
+              <Tooltip title="Làm mới">
+                <Button
+                  icon={<SyncOutlined />}
+                  onClick={handleRefresh}
+                  type="text"
+                  shape="circle"
+                />
+              </Tooltip>
+
+              <Button
+                icon={<FilePdfOutlined />}
+                type="default"
+                onClick={() => message.info("TODO: Export PDF")}
+              >
+                Xuất PDF
+              </Button>
+            </Space>
+          </Col>
+        </Row>
+      </div>
+
+      {/* Thông tin học sinh */}
+      <Card
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 18,
+          borderRadius: "1rem",
+          boxShadow: "0 4px 20px rgba(24, 144, 255, 0.1)",
+          marginBottom: "clamp(1.5rem, 4vw, 2rem)",
+          border: "1px solid #e8f4fd",
         }}
+        bodyStyle={{ padding: "clamp(1.5rem, 4vw, 2rem)" }}
       >
-        <div>
-          <h1
-            style={{ fontWeight: 700, fontSize: 28, margin: 0, color: "#333" }}
-          >
-            Thời khoá biểu lớp {classId}
-          </h1>
-          <div style={{ color: "#666", marginTop: 6 }}>
-            Học sinh: {currentUser?.name || currentUser?.email || "—"}
-          </div>
-        </div>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} sm={6} md={4}>
+            <div style={{ textAlign: "center" }}>
+              <Avatar
+                size={{ xs: 120, sm: 140, md: 160 }}
+                src={currentUser?.avatar}
+                icon={!currentUser?.avatar ? <UserOutlined /> : null}
+                style={{
+                  border: "4px solid #fff",
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+                }}
+              />
+            </div>
+          </Col>
+          <Col xs={24} sm={18} md={20}>
+            <div>
+              <Title
+                level={2}
+                style={{
+                  margin: "0 0 1rem 0",
+                  fontSize: "clamp(1.5rem, 4vw, 2rem)",
+                  color: "#1890ff",
+                }}
+              >
+                {currentUser?.name || "Học sinh"}
+              </Title>
+              <Row gutter={[24, 12]}>
+                <Col xs={24} sm={12} lg={8}>
+                  <Space>
+                    <BookOutlined style={{ color: "#1890ff" }} />
+                    <Text type="secondary">Lớp:</Text>
+                    <Tag color="blue" style={{ fontSize: "0.875rem" }}>
+                      {studentInfo?.className || "—"}
+                    </Tag>
+                  </Space>
+                </Col>
+                <Col xs={24} sm={12} lg={8}>
+                  <Space>
+                    <ClockCircleOutlined style={{ color: "#1890ff" }} />
+                    <Text type="secondary">Tổng tiết:</Text>
+                    <Text strong style={{ color: "#52c41a" }}>
+                      {allLessons.length} tiết
+                    </Text>
+                  </Space>
+                </Col>
+                <Col xs={24} sm={12} lg={8}>
+                  <Space>
+                    <CalendarOutlined style={{ color: "#1890ff" }} />
+                    <Text type="secondary">Tuần hiện tại:</Text>
+                    <Tag color="processing">{selectedWeek || "—"}</Tag>
+                  </Space>
+                </Col>
+              </Row>
+            </div>
+          </Col>
+        </Row>
+      </Card>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            onClick={handlePrevWeek}
-            disabled={!weeksData.length}
-            style={{ padding: "8px 12px" }}
-          >
-            Tuần trước
-          </button>
-          <select
-            value={selectedWeek || ""}
-            onChange={(e) => setSelectedWeek(e.target.value)}
-          >
-            {weeksData.map((w) => (
-              <option key={w.id} value={w.id}>
-                Tuần {w.id}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={handleNextWeek}
-            disabled={!weeksData.length}
-            style={{ padding: "8px 12px" }}
-          >
-            Tuần sau
-          </button>
-        </div>
-      </div>
+      {/* Timetable Grid */}
+      <Row gutter={[16, 16]}>
+        {DAY_META.map((d) => {
+          const lessons = groupedSchedule[d.key] || [];
+          return (
+            <Col key={d.key} xs={24} md={12} lg={8}>
+              <Card
+                title={<span style={{ fontWeight: 700 }}>{d.label}</span>}
+                extra={
+                  <Tag color={lessons.length ? "processing" : "default"}>
+                    {lessons.length} tiết
+                  </Tag>
+                }
+                style={{ borderRadius: 16, height: "100%" }}
+                bodyStyle={{ minHeight: 140 }}
+              >
+                {lessons.length === 0 ? (
+                  <Empty
+                    description="Không có tiết"
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  />
+                ) : (
+                  lessons.map((ls) => (
+                    <LessonCard
+                      key={ls.id || `${ls.subject}-${ls.startTime}`}
+                      lesson={ls}
+                    />
+                  ))
+                )}
+              </Card>
+            </Col>
+          );
+        })}
+      </Row>
 
-      {/* Summary Cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: 20,
-          marginBottom: 24,
-        }}
-      >
-        <div
-          style={{
-            background: "#fff",
-            borderRadius: 12,
-            padding: 18,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            border: "1px solid #e0e0e0",
-          }}
-        >
-          <h3
-            style={{ margin: 0, fontSize: 14, color: "#666", marginBottom: 8 }}
-          >
-            Tổng số tiết trong tuần
-          </h3>
-          <p
-            style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 700,
-              color: "#1976d2",
-            }}
-          >
-            {allLessonsThisWeek.length}
-          </p>
-        </div>
-
-        <div
-          style={{
-            background: "#fff",
-            borderRadius: 12,
-            padding: 18,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            border: "1px solid #e0e0e0",
-          }}
-        >
-          <h3
-            style={{ margin: 0, fontSize: 14, color: "#666", marginBottom: 8 }}
-          >
-            Tuần hiện tại
-          </h3>
-          <p
-            style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 700,
-              color: "#4caf50",
-            }}
-          >
-            {selectedWeek || "?"}
-          </p>
-        </div>
-
-        <div
-          style={{
-            background: "#fff",
-            borderRadius: 12,
-            padding: 18,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            border: "1px solid #e0e0e0",
-          }}
-        >
-          <h3
-            style={{ margin: 0, fontSize: 14, color: "#666", marginBottom: 8 }}
-          >
-            Lớp
-          </h3>
-          <p
-            style={{
-              margin: 0,
-              fontSize: 18,
-              fontWeight: 600,
-              color: "#ff9800",
-            }}
-          >
-            {classId}
-          </p>
-        </div>
-      </div>
-
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 12,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-          padding: 20,
-          marginBottom: 24,
-          border: "1px solid #e0e0e0",
-        }}
-      >
-        <h2
-          style={{
-            fontWeight: 600,
-            fontSize: 18,
-            marginBottom: 12,
-            color: "#333",
-            borderBottom: "2px solid #1976d2",
-            paddingBottom: 8,
-          }}
-        >
-          Thời khoá biểu tuần {selectedWeek || "?"}
-        </h2>
-
-        {loading ? (
-          <div>Đang tải...</div>
-        ) : (
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              borderRadius: 8,
-              overflow: "hidden",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-            }}
-          >
-            <thead
-              style={{
-                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-              }}
-            >
-              <tr>
-                {daysOfWeek.map((day, idx) => (
-                  <th
-                    key={idx}
-                    style={{
-                      padding: 12,
-                      textAlign: "center",
-                      color: "#fff",
-                      fontWeight: 600,
-                      fontSize: 14,
-                      borderRight:
-                        idx < daysOfWeek.length - 1
-                          ? "1px solid rgba(255,255,255,0.2)"
-                          : "none",
-                    }}
-                  >
-                    {day.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                {daysOfWeek.map((day, idx) => (
-                  <td
-                    key={idx}
-                    style={{
-                      padding: 12,
-                      verticalAlign: "top",
-                      backgroundColor: "#fafafa",
-                      borderRight:
-                        idx < daysOfWeek.length - 1
-                          ? "1px solid #e0e0e0"
-                          : "none",
-                      minHeight: 120,
-                    }}
-                  >
-                    {groupedSchedule[day.key] &&
-                    groupedSchedule[day.key].length > 0 ? (
-                      groupedSchedule[day.key].map((lesson, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            background:
-                              "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                            color: "#fff",
-                            padding: "10px 12px",
-                            marginBottom: 10,
-                            borderRadius: 8,
-                            boxShadow: "0 2px 8px rgba(102, 126, 234, 0.25)",
-                            cursor: "default",
-                          }}
-                        >
-                          <div style={{ fontWeight: 700, fontSize: 14 }}>
-                            {lesson.subject || lesson.name || "—"}
-                          </div>
-                          <div style={{ fontSize: 12, opacity: 0.95 }}>
-                            {lesson.startTime || ""} - {lesson.endTime || ""}
-                          </div>
-                          <div
-                            style={{ fontSize: 12, opacity: 0.9, marginTop: 6 }}
-                          >
-                            {lesson.teacher
-                              ? `Giáo viên: ${lesson.teacher}`
-                              : ""}{" "}
-                            {lesson.room ? ` • Phòng: ${lesson.room}` : ""}
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div
-                        style={{
-                          color: "#999",
-                          textAlign: "center",
-                          fontStyle: "italic",
-                          padding: "20px 0",
-                          backgroundColor: "#f9f9f9",
-                          borderRadius: 8,
-                          border: "2px dashed #ddd",
-                        }}
-                      >
-                        Không có tiết học
-                      </div>
-                    )}
-                  </td>
-                ))}
-              </tr>
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Quick Actions */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <button
-          style={{
-            background: "#1976d2",
-            color: "#fff",
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 16px",
-            fontWeight: 600,
-          }}
-        >
-          Chi tiết tuần
-        </button>
-        <button
-          style={{
-            background: "#fff",
-            color: "#1976d2",
-            border: "2px solid #1976d2",
-            borderRadius: 8,
-            padding: "10px 16px",
-            fontWeight: 600,
-          }}
-        >
-          Xuất PDF
-        </button>
-      </div>
+      {/* Stats */}
+      {stats && (
+        <>
+          <Divider />
+          <Card title="Thống kê nhanh" style={{ borderRadius: 16 }}>
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={8}>
+                <Card size="small" bordered={false}>
+                  <Text type="secondary">Tổng số tiết (theo dữ liệu)</Text>
+                  <div style={{ fontSize: 24, fontWeight: 700 }}>
+                    {stats.totalLessons ?? allLessons.length}
+                  </div>
+                </Card>
+              </Col>
+              <Col xs={24} md={8}>
+                <Card size="small" bordered={false}>
+                  <Text type="secondary">Môn học phổ biến</Text>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>
+                    {stats.topSubjects?.[0]?.subject || "—"}
+                  </div>
+                </Card>
+              </Col>
+            </Row>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

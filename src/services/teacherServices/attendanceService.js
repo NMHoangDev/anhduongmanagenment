@@ -835,3 +835,377 @@ export const markBulkStudentAttendance = async (
   await Promise.all(tasks);
   return { success: true, count: attendanceList.length };
 };
+
+/**
+ * Helper: last day of month (number)
+ */
+const _lastDayOfMonth = (year, month) => {
+  // month: 1-12
+  return new Date(year, month, 0).getDate();
+};
+
+/**
+ * Helper: build YYYY-MM-DD from parts (zero-padded)
+ */
+const _ymdFromParts = (year, month, day) =>
+  `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+/**
+ * SUBJECT TEACHER
+ * Thống kê điểm danh theo ngày cho giáo viên bộ môn.
+ * Trả về danh sách học sinh theo từng trạng thái (present/absent/late/excused) trong ngày.
+ */
+export const getDailySubjectAttendanceBreakdown = async ({
+  classId,
+  subjectId,
+  date,
+  teacherId,
+}) => {
+  if (!classId || !subjectId || !date || !teacherId) {
+    throw new Error("classId, subjectId, date, teacherId là bắt buộc");
+  }
+  // Quyền: phải là GV được phân công dạy môn đó trong lớp
+  const ok = await isTeacherAssignedToClassSubject(
+    teacherId,
+    classId,
+    subjectId
+  );
+  if (!ok) throw new Error("Bạn không được phân công dạy môn này trong lớp.");
+
+  const day = _ymd(date);
+  const qAtt = query(
+    collection(db, "student_attendance"),
+    where("classId", "==", classId),
+    where("date", "==", day),
+    where("subjectId", "==", subjectId)
+  );
+  const snap = await getDocs(qAtt);
+
+  const records = [];
+  const studentIds = new Set();
+  snap.forEach((d) => {
+    const rec = { id: d.id, ...d.data() };
+    records.push(rec);
+    if (rec.studentId) studentIds.add(rec.studentId);
+  });
+
+  // Fetch info cho các student đã có record
+  const studentsMap = new Map();
+  await Promise.all(
+    Array.from(studentIds).map(async (sid) => {
+      const sSnap = await getDoc(doc(db, "students", sid));
+      if (sSnap.exists()) {
+        studentsMap.set(snap.id, sSnap.data());
+      }
+      const data = sSnap.exists() ? sSnap.data() : { name: "Không tìm thấy" };
+      studentsMap.set(sid, { id: sid, ...data });
+    })
+  );
+
+  const group = {
+    present: [],
+    absent: [],
+    late: [],
+    excused: [],
+    other: [],
+  };
+
+  records.forEach((r) => {
+    const s = studentsMap.get(r.studentId) || {
+      id: r.studentId,
+      name: "Không tìm thấy",
+    };
+    const item = { ...s, recordId: r.id, status: r.status, note: r.note || "" };
+    if (r.status === "present") group.present.push(item);
+    else if (r.status === "absent") group.absent.push(item);
+    else if (r.status === "late") group.late.push(item);
+    else if (r.status === "excused") group.excused.push(item);
+    else group.other.push(item);
+  });
+
+  return {
+    classId,
+    subjectId,
+    date: day,
+    totalMarked: records.length,
+    counts: {
+      present: group.present.length,
+      absent: group.absent.length,
+      late: group.late.length,
+      excused: group.excused.length,
+      other: group.other.length,
+    },
+    studentsByStatus: group,
+  };
+};
+
+/**
+ * SUBJECT TEACHER
+ * Lịch thống kê theo tháng cho môn dạy: mỗi ngày liệt kê học sinh vắng/muộn/...
+ */
+export const getMonthlySubjectAttendanceCalendar = async ({
+  classId,
+  subjectId,
+  month,
+  year,
+  teacherId,
+}) => {
+  if (!classId || !subjectId || !month || !year || !teacherId) {
+    throw new Error("classId, subjectId, month, year, teacherId là bắt buộc");
+  }
+  const ok = await isTeacherAssignedToClassSubject(
+    teacherId,
+    classId,
+    subjectId
+  );
+  if (!ok) throw new Error("Bạn không được phân công dạy môn này trong lớp.");
+
+  const lastDay = _lastDayOfMonth(year, month);
+  const startDate = _ymdFromParts(year, month, 1);
+  const endDate = _ymdFromParts(year, month, lastDay);
+
+  const qAtt = query(
+    collection(db, "student_attendance"),
+    where("classId", "==", classId),
+    where("subjectId", "==", subjectId),
+    where("date", ">=", startDate),
+    where("date", "<=", endDate)
+  );
+  const snap = await getDocs(qAtt);
+
+  // Gom theo ngày
+  const byDate = {};
+  const studentIds = new Set();
+
+  snap.forEach((d) => {
+    const rec = d.data();
+    const day = rec.date;
+    if (!byDate[day]) {
+      byDate[day] = {
+        date: day,
+        present: [],
+        absent: [],
+        late: [],
+        excused: [],
+        other: [],
+      };
+    }
+    const bucket =
+      rec.status === "present"
+        ? "present"
+        : rec.status === "absent"
+        ? "absent"
+        : rec.status === "late"
+        ? "late"
+        : rec.status === "excused"
+        ? "excused"
+        : "other";
+    byDate[day][bucket].push(rec.studentId);
+    if (rec.studentId) studentIds.add(rec.studentId);
+  });
+
+  // Map tên học sinh
+  const studentsMap = new Map();
+  await Promise.all(
+    Array.from(studentIds).map(async (sid) => {
+      const sSnap = await getDoc(doc(db, "students", sid));
+      const data = sSnap.exists() ? sSnap.data() : { name: "Không tìm thấy" };
+      studentsMap.set(sid, { id: sid, ...data });
+    })
+  );
+
+  // Thay ids => objects có tên
+  const days = Object.keys(byDate).sort((a, b) => new Date(a) - new Date(b));
+  const result = days.map((dkey) => {
+    const entry = byDate[dkey];
+    const mapList = (ids) =>
+      ids.map(
+        (sid) => studentsMap.get(sid) || { id: sid, name: "Không tìm thấy" }
+      );
+    return {
+      date: entry.date,
+      present: mapList(entry.present),
+      absent: mapList(entry.absent),
+      late: mapList(entry.late),
+      excused: mapList(entry.excused),
+      other: mapList(entry.other),
+      counts: {
+        present: entry.present.length,
+        absent: entry.absent.length,
+        late: entry.late.length,
+        excused: entry.excused.length,
+        other: entry.other.length,
+        total:
+          entry.present.length +
+          entry.absent.length +
+          entry.late.length +
+          entry.excused.length +
+          entry.other.length,
+      },
+    };
+  });
+
+  return {
+    classId,
+    subjectId,
+    month,
+    year,
+    days: result,
+  };
+};
+
+/**
+ * HOMEROOM TEACHER
+ * Thống kê theo tháng: học sinh nào vắng/muộn ngày nào, môn nào.
+ * (GVCN xem toàn bộ bản ghi của lớp trong tháng, bao gồm bản ghi của GV bộ môn)
+ */
+export const getHomeroomMonthlyAbsenceDetails = async ({
+  classId,
+  month,
+  year,
+  teacherId,
+}) => {
+  if (!classId || !month || !year || !teacherId) {
+    throw new Error("classId, month, year, teacherId là bắt buộc");
+  }
+  const isHRT = await isHomeRoomTeacher(teacherId, classId);
+  if (!isHRT) {
+    throw new Error(
+      "Chỉ giáo viên chủ nhiệm mới có thể xem thống kê toàn lớp."
+    );
+  }
+
+  const lastDay = _lastDayOfMonth(year, month);
+  const startDate = _ymdFromParts(year, month, 1);
+  const endDate = _ymdFromParts(year, month, lastDay);
+
+  // Lấy danh sách học sinh của lớp
+  const classSnap = await getDoc(doc(db, "classes", classId));
+  if (!classSnap.exists()) throw new Error("Không tìm thấy lớp học");
+  const classData = classSnap.data() || {};
+  const studentIds = Array.isArray(classData.students)
+    ? classData.students
+    : [];
+
+  // Map học sinh
+  const studentsMap = new Map();
+  await Promise.all(
+    studentIds.map(async (sid) => {
+      const sSnap = await getDoc(doc(db, "students", sid));
+      const data = sSnap.exists() ? sSnap.data() : { name: "Không tìm thấy" };
+      studentsMap.set(sid, { id: sid, ...data });
+    })
+  );
+
+  // Lấy toàn bộ bản ghi điểm danh trong tháng cho lớp
+  const qAtt = query(
+    collection(db, "student_attendance"),
+    where("classId", "==", classId),
+    where("date", ">=", startDate),
+    where("date", "<=", endDate)
+  );
+  const snap = await getDocs(qAtt);
+
+  // Gom theo học sinh và theo ngày
+  const byStudent = new Map();
+  const byDate = {};
+
+  // Khởi tạo byStudent
+  studentIds.forEach((sid) => {
+    byStudent.set(sid, {
+      student: studentsMap.get(sid) || { id: sid, name: "Không tìm thấy" },
+      absent: [], // { date, subjectId }
+      late: [], // { date, subjectId }
+      excused: [], // { date, subjectId }
+      present: [], // { date, subjectId }
+      other: [], // { date, subjectId, status }
+    });
+  });
+
+  snap.forEach((d) => {
+    const rec = d.data();
+    const sid = rec.studentId;
+    const day = rec.date;
+    const subj = rec.subjectId || null; // null nếu GVCN điểm danh
+    if (!byDate[day]) {
+      byDate[day] = {
+        date: day,
+        absent: [],
+        late: [],
+        excused: [],
+        present: [],
+        other: [],
+      };
+    }
+
+    const entry = byStudent.get(sid) || {
+      student: { id: sid, name: "Không tìm thấy" },
+      absent: [],
+      late: [],
+      excused: [],
+      present: [],
+      other: [],
+    };
+
+    const detail = { date: day, subjectId: subj, status: rec.status };
+    if (rec.status === "absent") {
+      entry.absent.push(detail);
+      byDate[day].absent.push(sid);
+    } else if (rec.status === "late") {
+      entry.late.push(detail);
+      byDate[day].late.push(sid);
+    } else if (rec.status === "excused") {
+      entry.excused.push(detail);
+      byDate[day].excused.push(sid);
+    } else if (rec.status === "present") {
+      entry.present.push(detail);
+      byDate[day].present.push(sid);
+    } else {
+      entry.other.push(detail);
+      byDate[day].other.push(sid);
+    }
+
+    byStudent.set(sid, entry);
+  });
+
+  // Map ID -> object có tên cho byDate
+  const mapIds = (ids) =>
+    Array.from(new Set(ids)).map(
+      (sid) => studentsMap.get(sid) || { id: sid, name: "Không tìm thấy" }
+    );
+
+  const days = Object.keys(byDate).sort((a, b) => new Date(a) - new Date(b));
+  const dayDetails = days.map((dkey) => {
+    const e = byDate[dkey];
+    return {
+      date: e.date,
+      absent: mapIds(e.absent),
+      late: mapIds(e.late),
+      excused: mapIds(e.excused),
+      present: mapIds(e.present),
+      other: mapIds(e.other),
+      counts: {
+        absent: e.absent.length,
+        late: e.late.length,
+        excused: e.excused.length,
+        present: e.present.length,
+        other: e.other.length,
+        total:
+          e.absent.length +
+          e.late.length +
+          e.excused.length +
+          e.present.length +
+          e.other.length,
+      },
+    };
+  });
+
+  return {
+    classId,
+    month,
+    year,
+    students: Array.from(byStudent.values()),
+    days: dayDetails,
+    totalStudents: studentIds.length,
+  };
+};

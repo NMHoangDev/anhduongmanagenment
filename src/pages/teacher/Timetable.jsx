@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { getClassTimetable } from "../../services/adminServices/teacherService";
+import { clearAllTimetableDocuments } from "../../services/deleteService";
 
 export default function TeacherTimetable() {
   const [schedule, setSchedule] = useState([]);

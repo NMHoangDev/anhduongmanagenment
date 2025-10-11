@@ -1,49 +1,31 @@
 import {
   doc,
   collection,
+  getDoc,
   getDocs,
+  setDoc,
+  updateDoc,
   deleteDoc,
   query,
   where,
-  addDoc,
-  updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { v4 as uuidv4 } from "uuid";
 
 /**
- * TimetableService V2 - Cấu trúc mới tối ưu cho CRUD và truy xuất
+ * Timetable by SESSION (semester) – stored per class + session
+ * Collection: timetable
+ * DocID: `${classId}__${sessionName}`  // e.g. "class_001__SESSION 1 2024-2025"
  *
- * Cấu trúc Firestore mới:
- *
- * Collection: timetable_sessions
- * Document ID: auto-generated
+ * Document schema:
  * {
- *   id: "auto-generated-id",
- *   classId: "class_001",
- *   weekId: "2024-W32",
- *   date: "2024-08-05", // YYYY-MM-DD format
- *   dayOfWeek: "monday", // monday, tuesday, etc.
- *   timeSlot: 1, // 1-10
- *   startTime: "07:00",
- *   endTime: "07:45",
- *   subject: "Toán",
- *   teacherId: "teacher_001",
- *   room: "A101",
- *   note: "",
- *   status: "active", // active, cancelled, completed
- *   createdAt: "2024-08-05T10:00:00.000Z",
- *   updatedAt: "2024-08-05T10:00:00.000Z"
+ *   id, classId, sessionName, yearRange, term, createdAt, updatedAt,
+ *   sessions: [ { id, date, dayOfWeek, timeSlot, startTime, endTime, subject, teacherId, room, note, status, createdAt, updatedAt } ]
  * }
- *
- * Ưu điểm:
- * 1. Dễ truy vấn theo teacherId, date để điểm danh
- * 2. Mỗi tiết học là 1 document riêng biệt - dễ CRUD
- * 3. Có thể query nhanh theo nhiều tiêu chí
- * 4. Không cần composite index phức tạp
  */
 
-// Định nghĩa các tiết học trong ngày
-const TIME_SLOTS = [
+// ==== Constants ====
+export const TIME_SLOTS = [
   { id: 1, label: "Tiết 1", startTime: "07:00", endTime: "07:45" },
   { id: 2, label: "Tiết 2", startTime: "07:45", endTime: "08:30" },
   { id: 3, label: "Tiết 3", startTime: "08:45", endTime: "09:30" },
@@ -56,7 +38,7 @@ const TIME_SLOTS = [
   { id: 10, label: "Tiết 10", startTime: "15:30", endTime: "16:15" },
 ];
 
-const DAYS_OF_WEEK = [
+export const DAYS_OF_WEEK = [
   "monday",
   "tuesday",
   "wednesday",
@@ -65,563 +47,418 @@ const DAYS_OF_WEEK = [
   "saturday",
 ];
 
-// Helper functions
-export const getTimeSlotById = (timeSlotId) => {
-  return TIME_SLOTS.find((slot) => slot.id === timeSlotId);
-};
+// ==== Helpers ====
+export const getTimeSlotById = (timeSlotId) =>
+  TIME_SLOTS.find((slot) => slot.id === timeSlotId);
 
-export const getWeekId = (date) => {
-  const d = new Date(date);
-  const year = d.getFullYear();
-  const oneJan = new Date(year, 0, 1);
-  const numberOfDays = Math.floor((d - oneJan) / (24 * 60 * 60 * 1000));
-  const week = Math.ceil((d.getDay() + 1 + numberOfDays) / 7);
-  return `${year}-W${week.toString().padStart(2, "0")}`;
-};
-
-export const getDateFromWeekAndDay = (weekId, dayOfWeek) => {
-  // Parse weekId (e.g., "2024-W32")
-  const [year, weekNum] = weekId.split("-W");
-  const week = parseInt(weekNum);
-
-  // Get first day of year
-  const firstDay = new Date(parseInt(year), 0, 1);
-
-  // Calculate the date of Monday of the target week
-  const daysToAdd = (week - 1) * 7 - firstDay.getDay() + 1;
-  const mondayDate = new Date(
-    firstDay.getTime() + daysToAdd * 24 * 60 * 60 * 1000
-  );
-
-  // Add days based on dayOfWeek
-  const dayIndex = DAYS_OF_WEEK.indexOf(dayOfWeek);
-  const targetDate = new Date(
-    mondayDate.getTime() + dayIndex * 24 * 60 * 60 * 1000
-  );
-
-  return targetDate.toISOString().split("T")[0]; // Return YYYY-MM-DD format
-};
-
-export const getWeekDisplayString = (date) => {
-  const d = new Date(date);
-  const weekId = getWeekId(d);
-
-  // Get Monday of this week
-  const monday = new Date(d);
-  monday.setDate(d.getDate() - d.getDay() + 1);
-
-  // Get Sunday of this week
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-
-  const formatDate = (date) => {
-    return `${date.getDate().toString().padStart(2, "0")}/${(
-      date.getMonth() + 1
-    )
-      .toString()
-      .padStart(2, "0")}`;
-  };
-
-  return {
-    weekId,
-    display: `Tuần ${weekId.split("-W")[1]} (${formatDate(
-      monday
-    )} - ${formatDate(sunday)})`,
-    startDate: monday.toISOString().split("T")[0],
-    endDate: sunday.toISOString().split("T")[0],
-  };
-};
-
-// Hàm tạo chuỗi ISO theo giờ Việt Nam (GMT+7)
 const getVietnamISOString = () => {
   const now = new Date();
   now.setHours(now.getHours() + 7);
   return now.toISOString();
 };
 
-// Lấy ngày theo GMT+7, trả về "YYYY-MM-DD"
-const getVietnamDateString = (dateString) => {
-  const date = new Date(dateString + "T00:00:00+07:00");
-  // Đảm bảo luôn lấy ngày theo múi giờ Việt Nam
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const day = date.getDate().toString().padStart(2, "0");
-  return `${year}-${month}-${day}`;
+// Build session name in required format
+export const buildSessionName = (term /*1|2*/, yearFrom, yearTo) =>
+  `SESSION ${term} ${yearFrom}-${yearTo}`;
+
+export const parseSessionName = (sessionName) => {
+  // "SESSION 1 2024-2025" -> { term: 1, yearRange: "2024-2025", yearFrom: 2024, yearTo: 2025 }
+  const m = sessionName.match(/^SESSION\s+(\d)\s+(\d{4})-(\d{4})$/i);
+  if (!m) throw new Error("Invalid sessionName format");
+  const term = parseInt(m[1], 10);
+  const yearFrom = parseInt(m[2], 10);
+  const yearTo = parseInt(m[3], 10);
+  return { term, yearRange: `${yearFrom}-${yearTo}`, yearFrom, yearTo };
 };
 
-/**
- * Tạo một tiết học mới
- */
-export const createTimetableSession = async (sessionData) => {
-  try {
-    const timeSlot = getTimeSlotById(sessionData.timeSlot);
-    // Lấy ngày chuẩn theo tuần và thứ
-    // const rawDate = getDateFromWeekAndDay(
-    //   sessionData.weekId,
-    //   sessionData.dayOfWeek
-    // );
-    // Chuyển ngày về đúng GMT+7
-    // const date = getVietnamDateString(rawDate);
+// Build document id
+const buildTimetableDocId = (classId, sessionName) =>
+  `${classId}__${sessionName}`;
 
-    const newSession = {
-      classId: sessionData.classId,
-      weekId: sessionData.weekId,
-      date: sessionData.date, // Đã chuẩn GMT+7
-      dayOfWeek: sessionData.dayOfWeek,
-      timeSlot: sessionData.timeSlot,
-      startTime: timeSlot?.startTime || "",
-      endTime: timeSlot?.endTime || "",
-      subject: sessionData.subject || "",
-      teacherId: sessionData.teacherId || "",
-      room: sessionData.room || "",
-      note: sessionData.note || "",
-      status: "active",
-      createdAt: getVietnamISOString(), // Sử dụng giờ Việt Nam
-      updatedAt: getVietnamISOString(), // Sử dụng giờ Việt Nam
-    };
+// Ensure timetable doc exists
+const ensureTimetableDoc = async (classId, sessionName) => {
+  const { term, yearRange } = parseSessionName(sessionName);
+  const docId = buildTimetableDocId(classId, sessionName);
+  const ref = doc(db, "timetable", docId);
+  const snap = await getDoc(ref);
 
-    console.log("🔥 Creating new timetable session:", newSession);
-
-    const docRef = await addDoc(
-      collection(db, "timetable_sessions"),
-      newSession
-    );
-
-    console.log("✅ Timetable session created with ID:", docRef.id);
-
-    return {
-      id: docRef.id,
-      ...newSession,
-    };
-  } catch (error) {
-    console.error("❌ Error creating timetable session:", error);
-    throw error;
-  }
-};
-
-/**
- * Cập nhật một tiết học
- */
-export const updateTimetableSession = async (sessionId, sessionData) => {
-  try {
-    const timeSlot = getTimeSlotById(sessionData.timeSlot);
-    const date = getDateFromWeekAndDay(
-      sessionData.weekId,
-      sessionData.dayOfWeek
-    );
-
-    const updatedSession = {
-      classId: sessionData.classId,
-      weekId: sessionData.weekId,
-      date: date,
-      dayOfWeek: sessionData.dayOfWeek,
-      timeSlot: sessionData.timeSlot,
-      startTime: timeSlot?.startTime || "",
-      endTime: timeSlot?.endTime || "",
-      subject: sessionData.subject || "",
-      teacherId: sessionData.teacherId || "",
-      room: sessionData.room || "",
-      note: sessionData.note || "",
-      status: sessionData.status || "active",
-      updatedAt: getVietnamISOString(), // Sử dụng giờ Việt Nam
-    };
-
-    console.log("🔥 Updating timetable session:", sessionId, updatedSession);
-
-    const sessionRef = doc(db, "timetable_sessions", sessionId);
-    await updateDoc(sessionRef, updatedSession);
-
-    console.log("✅ Timetable session updated:", sessionId);
-
-    return {
-      id: sessionId,
-      ...updatedSession,
-    };
-  } catch (error) {
-    console.error("❌ Error updating timetable session:", error);
-    throw error;
-  }
-};
-
-/**
- * Xóa một tiết học
- */
-export const deleteTimetableSession = async (sessionId) => {
-  try {
-    console.log("🔥 Deleting timetable session:", sessionId);
-
-    const sessionRef = doc(db, "timetable_sessions", sessionId);
-    await deleteDoc(sessionRef);
-
-    console.log("✅ Timetable session deleted:", sessionId);
-
-    return true;
-  } catch (error) {
-    console.error("❌ Error deleting timetable session:", error);
-    throw error;
-  }
-};
-
-/**
- * Lấy thời khóa biểu của một lớp trong tuần
- */
-export const getTimetableByClassAndWeek = async (classId, weekId) => {
-  try {
-    console.log("🔍 Getting timetable for class and week:", {
+  if (!snap.exists()) {
+    const now = getVietnamISOString();
+    await setDoc(ref, {
+      id: docId,
       classId,
-      weekId,
+      sessionName,
+      yearRange,
+      term,
+      createdAt: now,
+      updatedAt: now,
+      sessions: [],
     });
+  }
+  return ref;
+};
 
-    const q = query(
-      collection(db, "timetable_sessions"),
-      where("classId", "==", classId),
-      where("weekId", "==", weekId),
-      where("status", "==", "active")
-    );
+// ==== CRUD for a single period (session item) inside a class+session timetable ====
 
-    const querySnapshot = await getDocs(q);
-    const sessions = [];
+/**
+ * Add a new lesson (period) to class+session
+ */
+export const addTimetablePeriod = async (classId, sessionName, periodData) => {
+  try {
+    const ref = await ensureTimetableDoc(classId, sessionName);
 
-    querySnapshot.forEach((doc) => {
-      sessions.push({
-        id: doc.id,
-        ...doc.data(),
-      });
+    const timeSlot = getTimeSlotById(periodData.timeSlot);
+    const now = getVietnamISOString();
+    const newItem = {
+      id: uuidv4(),
+      date: periodData.date, // "YYYY-MM-DD"
+      dayOfWeek: periodData.dayOfWeek, // "monday"... (optional but recommended)
+      timeSlot: periodData.timeSlot,
+      startTime: timeSlot?.startTime || "",
+      endTime: timeSlot?.endTime || "",
+      subject: periodData.subject || "",
+      teacherId: periodData.teacherId || "",
+      room: periodData.room || "",
+      note: periodData.note || "",
+      status: periodData.status || "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const snap = await getDoc(ref);
+    const data = snap.data();
+    const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    sessions.push(newItem);
+
+    await updateDoc(ref, { sessions, updatedAt: now });
+
+    return newItem;
+  } catch (err) {
+    console.error("❌ addTimetablePeriod error:", err);
+    throw err;
+  }
+};
+
+/**
+ * Update a lesson (period) by id inside class+session
+ */
+export const updateTimetablePeriod = async (
+  classId,
+  sessionName,
+  periodId,
+  patch
+) => {
+  try {
+    const ref = await ensureTimetableDoc(classId, sessionName);
+    const snap = await getDoc(ref);
+    const data = snap.data();
+    const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    const idx = sessions.findIndex((s) => s.id === periodId);
+    if (idx === -1) throw new Error("Period not found");
+
+    // keep timeSlot coherent
+    const merged = { ...sessions[idx], ...patch };
+    if (typeof merged.timeSlot === "number") {
+      const ts = getTimeSlotById(merged.timeSlot);
+      merged.startTime = ts?.startTime || merged.startTime || "";
+      merged.endTime = ts?.endTime || merged.endTime || "";
+    }
+    merged.updatedAt = getVietnamISOString();
+
+    sessions[idx] = merged;
+    await updateDoc(ref, { sessions, updatedAt: merged.updatedAt });
+
+    return merged;
+  } catch (err) {
+    console.error("❌ updateTimetablePeriod error:", err);
+    throw err;
+  }
+};
+
+/**
+ * Delete a lesson (period) by id inside class+session
+ */
+export const deleteTimetablePeriod = async (classId, sessionName, periodId) => {
+  try {
+    const ref = await ensureTimetableDoc(classId, sessionName);
+    const snap = await getDoc(ref);
+    const data = snap.data();
+    const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    const filtered = sessions.filter((s) => s.id !== periodId);
+    if (filtered.length === sessions.length)
+      throw new Error("Period not found");
+
+    await updateDoc(ref, {
+      sessions: filtered,
+      updatedAt: getVietnamISOString(),
     });
+    return true;
+  } catch (err) {
+    console.error("❌ deleteTimetablePeriod error:", err);
+    throw err;
+  }
+};
 
-    // Organize sessions by day and sort by timeSlot
+// ==== Higher-level operations ====
+
+/**
+ * Get timetable for a class in a session
+ */
+export const getTimetableByClassAndSession = async (classId, sessionName) => {
+  try {
+    const ref = await ensureTimetableDoc(classId, sessionName);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return { classId, sessionName, schedule: {} };
+
+    const { sessions = [] } = snap.data();
+
+    // group by day and sort by timeSlot
     const schedule = {};
-    DAYS_OF_WEEK.forEach((day) => {
-      schedule[day] = sessions
-        .filter((session) => session.dayOfWeek === day)
-        .sort((a, b) => a.timeSlot - b.timeSlot);
-    });
-
-    console.log("✅ Timetable retrieved:", {
-      classId,
-      weekId,
-      sessionsCount: sessions.length,
-    });
-
-    return { schedule };
-  } catch (error) {
-    console.error("❌ Error getting timetable:", error);
-    throw error;
-  }
-};
-
-/**
- * Lấy tất cả thời khóa biểu của tuần
- */
-export const getAllTimetablesByWeek = async (weekId) => {
-  try {
-    console.log("🔍 Getting all timetables for week:", weekId);
-
-    const q = query(
-      collection(db, "timetable_sessions"),
-      where("weekId", "==", weekId),
-      where("status", "==", "active")
-    );
-
-    const querySnapshot = await getDocs(q);
-    const sessions = [];
-
-    querySnapshot.forEach((doc) => {
-      sessions.push({
-        id: doc.id,
-        ...doc.data(),
-      });
-    });
-
-    // Group by classId
-    const timetables = {};
-    sessions.forEach((session) => {
-      if (!timetables[session.classId]) {
-        timetables[session.classId] = {};
-        DAYS_OF_WEEK.forEach((day) => {
-          timetables[session.classId][day] = [];
-        });
-      }
-
-      timetables[session.classId][session.dayOfWeek].push(session);
-    });
-
-    // Sort sessions within each day
-    Object.keys(timetables).forEach((classId) => {
-      DAYS_OF_WEEK.forEach((day) => {
-        timetables[classId][day].sort((a, b) => a.timeSlot - b.timeSlot);
-      });
-    });
-
-    console.log("✅ All timetables retrieved:", {
-      weekId,
-      classesCount: Object.keys(timetables).length,
-    });
-
-    return timetables;
-  } catch (error) {
-    console.error("❌ Error getting all timetables:", error);
-    throw error;
-  }
-};
-
-/**
- * Lấy lịch dạy của giáo viên trong ngày - Tối ưu cho điểm danh
- */
-export const getTeacherScheduleByDate = async (teacherId, date) => {
-  try {
-    console.log("🔍 Getting teacher schedule by date:", { teacherId, date });
-
-    // Thử query không có status filter trước
-    const q = query(
-      collection(db, "timetable_sessions"),
-      where("teacherId", "==", teacherId),
-      where("date", "==", date)
-    );
-
-    const querySnapshot = await getDocs(q);
-    const sessions = [];
-
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      // Chỉ lấy sessions active hoặc không có status (tương thích với data cũ)
-      if (!data.status || data.status === "active") {
-        sessions.push({
-          id: doc.id,
-          ...data,
-        });
+    DAYS_OF_WEEK.forEach((d) => (schedule[d] = []));
+    sessions.forEach((s) => {
+      const day = s.dayOfWeek || DAYS_OF_WEEK[new Date(s.date).getDay() - 1];
+      if (!schedule[day]) schedule[day] = [];
+      if (!s.status || s.status === "active") {
+        schedule[day].push(s);
       }
     });
+    Object.keys(schedule).forEach((day) =>
+      schedule[day].sort((a, b) => a.timeSlot - b.timeSlot)
+    );
 
-    // Sort by timeSlot
-    sessions.sort((a, b) => a.timeSlot - b.timeSlot);
-
-    console.log("✅ Teacher schedule retrieved:", {
-      teacherId,
-      date,
-      sessionsCount: sessions.length,
-      sessions,
-    });
-
-    return sessions;
-  } catch (error) {
-    console.error("❌ Error getting teacher schedule:", error);
-    throw error;
+    return { classId, sessionName, schedule };
+  } catch (err) {
+    console.error("❌ getTimetableByClassAndSession error:", err);
+    throw err;
   }
 };
 
 /**
- * Lấy lịch dạy của giáo viên trong khoảng thời gian
+ * Clear all periods for a class in a session
  */
-export const getTeacherScheduleByDateRange = async (
-  teacherId,
-  startDate,
-  endDate
-) => {
+export const clearTimetableForClassInSession = async (classId, sessionName) => {
   try {
-    console.log("🔍 Getting teacher schedule by date range:", {
-      teacherId,
-      startDate,
-      endDate,
-    });
-
-    const q = query(
-      collection(db, "timetable_sessions"),
-      where("teacherId", "==", teacherId),
-      where("date", ">=", startDate),
-      where("date", "<=", endDate),
-      where("status", "==", "active")
-    );
-
-    const querySnapshot = await getDocs(q);
-    const sessions = [];
-
-    querySnapshot.forEach((doc) => {
-      sessions.push({
-        id: doc.id,
-        ...doc.data(),
-      });
-    });
-
-    // Sort by date and timeSlot
-    sessions.sort((a, b) => {
-      if (a.date === b.date) {
-        return a.timeSlot - b.timeSlot;
-      }
-      return new Date(a.date) - new Date(b.date);
-    });
-
-    console.log("✅ Teacher schedule range retrieved:", {
-      teacherId,
-      startDate,
-      endDate,
-      sessionsCount: sessions.length,
-    });
-
-    return sessions;
-  } catch (error) {
-    console.error("❌ Error getting teacher schedule range:", error);
-    throw error;
-  }
-};
-
-/**
- * Xóa tất cả tiết học của một lớp trong tuần
- */
-export const clearTimetableForClass = async (classId, weekId) => {
-  try {
-    console.log("🔥 Clearing timetable for class:", { classId, weekId });
-
-    const q = query(
-      collection(db, "timetable_sessions"),
-      where("classId", "==", classId),
-      where("weekId", "==", weekId)
-    );
-
-    const querySnapshot = await getDocs(q);
-    const deletePromises = [];
-
-    querySnapshot.forEach((doc) => {
-      deletePromises.push(deleteDoc(doc.ref));
-    });
-
-    await Promise.all(deletePromises);
-
-    console.log("✅ Timetable cleared for class:", {
-      classId,
-      weekId,
-      deletedCount: deletePromises.length,
-    });
-
+    const ref = await ensureTimetableDoc(classId, sessionName);
+    await updateDoc(ref, { sessions: [], updatedAt: getVietnamISOString() });
     return true;
-  } catch (error) {
-    console.error("❌ Error clearing timetable:", error);
-    throw error;
+  } catch (err) {
+    console.error("❌ clearTimetableForClassInSession error:", err);
+    throw err;
   }
 };
 
 /**
- * Sao chép thời khóa biểu từ tuần này sang tuần khác
+ * Copy timetable from one (class, session) to another
  */
-export const copyTimetableToWeek = async (
+export const copyTimetableBetweenSessions = async (
   fromClassId,
-  fromWeekId,
+  fromSessionName,
   toClassId,
-  toWeekId
+  toSessionName
 ) => {
   try {
-    console.log("🔥 Copying timetable:", {
-      fromClassId,
-      fromWeekId,
-      toClassId,
-      toWeekId,
-    });
+    const fromRef = await ensureTimetableDoc(fromClassId, fromSessionName);
+    const toRef = await ensureTimetableDoc(toClassId, toSessionName);
 
-    // Get source sessions
-    const sourceQ = query(
-      collection(db, "timetable_sessions"),
-      where("classId", "==", fromClassId),
-      where("weekId", "==", fromWeekId),
-      where("status", "==", "active")
-    );
+    const fromSnap = await getDoc(fromRef);
+    const toSnap = await getDoc(toRef);
+    const fromData = fromSnap.data();
+    const toData = toSnap.data();
 
-    const sourceSnapshot = await getDocs(sourceQ);
-    const copyPromises = [];
+    const now = getVietnamISOString();
+    const copied = (fromData.sessions || [])
+      .filter((s) => !s.status || s.status === "active")
+      .map((s) => ({
+        ...s,
+        id: uuidv4(),
+        createdAt: now,
+        updatedAt: now,
+      }));
 
-    sourceSnapshot.forEach((doc) => {
-      const sourceData = doc.data();
-      const newDate = getDateFromWeekAndDay(toWeekId, sourceData.dayOfWeek);
-
-      const newSession = {
-        ...sourceData,
-        classId: toClassId,
-        weekId: toWeekId,
-        date: newDate,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      copyPromises.push(
-        addDoc(collection(db, "timetable_sessions"), newSession)
-      );
-    });
-
-    await Promise.all(copyPromises);
-
-    console.log("✅ Timetable copied:", {
-      fromClassId,
-      fromWeekId,
-      toClassId,
-      toWeekId,
-      copiedCount: copyPromises.length,
+    await updateDoc(toRef, {
+      sessions: [...(toData.sessions || []), ...copied],
+      updatedAt: now,
     });
 
     return true;
-  } catch (error) {
-    console.error("❌ Error copying timetable:", error);
-    throw error;
+  } catch (err) {
+    console.error("❌ copyTimetableBetweenSessions error:", err);
+    throw err;
   }
 };
 
 /**
- * Kiểm tra xung đột thời khóa biểu
+ * Check conflicts within a session (same teacher, same date + timeSlot)
+ * Scope: entire session for one class OR all classes if classId is null
  */
-export const checkTimetableConflicts = async (weekId) => {
+export const checkTimetableConflictsInSession = async (
+  sessionName,
+  classId /* optional: if provided, only that class; else all classes in session */
+) => {
   try {
-    console.log("🔍 Checking timetable conflicts for week:", weekId);
+    const { yearRange, term } = parseSessionName(sessionName);
 
-    const q = query(
-      collection(db, "timetable_sessions"),
-      where("weekId", "==", weekId),
-      where("status", "==", "active")
-    );
+    let docsSnap;
+    if (classId) {
+      const ref = await ensureTimetableDoc(classId, sessionName);
+      docsSnap = { docs: [{ id: ref.id, data: () => getDoc(ref).data() }] };
+      // NOTE: above pattern is for uniform processing below; but await cannot be used in object literal.
+      // Simpler: resolve directly:
+      const singleDocSnap = await getDoc(ref);
+      docsSnap = { docs: [{ id: ref.id, data: () => singleDocSnap.data() }] };
+    } else {
+      // all classes in this session
+      const qy = query(
+        collection(db, "timetable"),
+        where("sessionName", "==", sessionName),
+        where("yearRange", "==", yearRange),
+        where("term", "==", term)
+      );
+      docsSnap = await getDocs(qy);
+    }
 
-    const querySnapshot = await getDocs(q);
-    const sessions = [];
-
-    querySnapshot.forEach((doc) => {
-      sessions.push({
-        id: doc.id,
-        ...doc.data(),
+    const all = [];
+    for (const d of docsSnap.docs) {
+      const data = d.data();
+      (data.sessions || []).forEach((s) => {
+        if (!s.status || s.status === "active") {
+          all.push({ classId: data.classId, ...s });
+        }
       });
-    });
+    }
 
     const conflicts = [];
-
-    // Check for teacher conflicts (same teacher, same time, same day)
-    for (let i = 0; i < sessions.length; i++) {
-      for (let j = i + 1; j < sessions.length; j++) {
-        const session1 = sessions[i];
-        const session2 = sessions[j];
-
+    for (let i = 0; i < all.length; i++) {
+      for (let j = i + 1; j < all.length; j++) {
+        const a = all[i];
+        const b = all[j];
         if (
-          session1.teacherId === session2.teacherId &&
-          session1.date === session2.date &&
-          session1.timeSlot === session2.timeSlot &&
-          session1.teacherId // Only check if teacherId exists
+          a.teacherId &&
+          a.teacherId === b.teacherId &&
+          a.date === b.date &&
+          a.timeSlot === b.timeSlot
         ) {
           conflicts.push({
             type: "teacher_conflict",
-            teacherId: session1.teacherId,
-            date: session1.date,
-            timeSlot: session1.timeSlot,
-            sessions: [session1, session2],
+            teacherId: a.teacherId,
+            date: a.date,
+            timeSlot: a.timeSlot,
+            sessions: [a, b],
           });
         }
       }
     }
-
-    console.log("✅ Conflicts checked:", {
-      weekId,
-      conflictsCount: conflicts.length,
-    });
-
     return conflicts;
-  } catch (error) {
-    console.error("❌ Error checking conflicts:", error);
-    throw error;
+  } catch (err) {
+    console.error("❌ checkTimetableConflictsInSession error:", err);
+    throw err;
   }
 };
 
-// Export tất cả functions cần thiết cho compatibility
+// ==== Convenience queries (basic – scan + filter) ====
+
+/**
+ * Get teacher schedule by date (scans timetables in a sessionYearRange/term if provided; otherwise scans all)
+ * For production-scale teacher queries, consider a secondary collection (timetable_sessions) for indexing.
+ */
+export const getTeacherScheduleByDate = async (
+  teacherId,
+  date,
+  sessionName /* optional: narrow search */
+) => {
+  try {
+    let docsSnap;
+    if (sessionName) {
+      const { term, yearRange } = parseSessionName(sessionName);
+      const qy = query(
+        collection(db, "timetable"),
+        where("sessionName", "==", sessionName),
+        where("yearRange", "==", yearRange),
+        where("term", "==", term)
+      );
+      docsSnap = await getDocs(qy);
+    } else {
+      docsSnap = await getDocs(collection(db, "timetable"));
+    }
+
+    const matches = [];
+    docsSnap.forEach((d) => {
+      const data = d.data();
+      (data.sessions || []).forEach((s) => {
+        if (
+          (!s.status || s.status === "active") &&
+          s.teacherId === teacherId &&
+          s.date === date
+        ) {
+          matches.push({
+            classId: data.classId,
+            sessionName: data.sessionName,
+            ...s,
+          });
+        }
+      });
+    });
+
+    matches.sort((a, b) => a.timeSlot - b.timeSlot);
+    return matches;
+  } catch (err) {
+    console.error("❌ getTeacherScheduleByDate error:", err);
+    throw err;
+  }
+};
+
+export const getTeacherScheduleByDateRange = async (
+  teacherId,
+  startDate,
+  endDate,
+  sessionName /* optional */
+) => {
+  try {
+    let docsSnap;
+    if (sessionName) {
+      const { term, yearRange } = parseSessionName(sessionName);
+      const qy = query(
+        collection(db, "timetable"),
+        where("sessionName", "==", sessionName),
+        where("yearRange", "==", yearRange),
+        where("term", "==", term)
+      );
+      docsSnap = await getDocs(qy);
+    } else {
+      docsSnap = await getDocs(collection(db, "timetable"));
+    }
+
+    const inRange = (d) => d >= startDate && d <= endDate;
+
+    const matches = [];
+    docsSnap.forEach((d) => {
+      const data = d.data();
+      (data.sessions || []).forEach((s) => {
+        if (
+          (!s.status || s.status === "active") &&
+          s.teacherId === teacherId &&
+          inRange(s.date)
+        ) {
+          matches.push({
+            classId: data.classId,
+            sessionName: data.sessionName,
+            ...s,
+          });
+        }
+      });
+    });
+
+    matches.sort((a, b) => {
+      if (a.date === b.date) return a.timeSlot - b.timeSlot;
+      return new Date(a.date) - new Date(b.date);
+    });
+
+    return matches;
+  } catch (err) {
+    console.error("❌ getTeacherScheduleByDateRange error:", err);
+    throw err;
+  }
+};
+
+// Export for compatibility
 export { TIME_SLOTS as timeSlots, DAYS_OF_WEEK as days };

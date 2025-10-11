@@ -34,7 +34,11 @@ const menu = [
     path: "/teacher/class",
     icon: <FaChalkboardTeacher />,
   },
-  { label: "Ra đề/Bài tập", path: "/teacher/assignment", icon: <FaBookOpen /> },
+  {
+    label: "Tạo bài trắc nghiệm",
+    path: "/teacher/assignment",
+    icon: <FaBookOpen />,
+  },
   {
     label: "Thời khóa biểu",
     path: "/teacher/timetable",
