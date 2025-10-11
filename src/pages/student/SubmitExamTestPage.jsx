@@ -21,10 +21,9 @@ import {
   Alert,
   Drawer,
   Divider,
+  Spin,
 } from "antd";
 import {
-  FaBookReader,
-  FaCalendarAlt,
   FaCheck,
   FaClipboardCheck,
   FaClipboardList,
@@ -36,12 +35,12 @@ import {
   FaQuestionCircle,
   FaStopwatch,
   FaTrophy,
-  FaUser,
   FaBars,
   FaArrowLeft,
   FaArrowRight,
   FaCheckCircle,
   FaTimesCircle,
+  FaSchool,
 } from "react-icons/fa";
 import dayjs from "dayjs";
 import duration from "dayjs/plugin/duration";
@@ -55,18 +54,12 @@ import {
 
 dayjs.extend(duration);
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 const { TabPane } = Tabs;
 
 export default function SubmitExamTestPage() {
   const { currentUser } = useAuth();
-  const studentId =
-    currentUser?.uid ||
-    currentUser?.id ||
-    currentUser?.studentId ||
-    localStorage.getItem("studentId") ||
-    localStorage.getItem("uid") ||
-    "student_demo";
+  const studentId = currentUser?.id;
 
   const [tests, setTests] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -91,16 +84,29 @@ export default function SubmitExamTestPage() {
   const [timerInterval, setTimerInterval] = useState(null);
   const [startTime, setStartTime] = useState(null);
 
+  const clearTimer = () => {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      setTimerInterval(null);
+    }
+  };
+
   const loadTests = useCallback(async () => {
-    if (!studentId) return;
+    if (!studentId) {
+      message.warning("Không tìm thấy thông tin học sinh");
+      return;
+    }
     setLoadingTests(true);
     try {
       const list = await getExamTestsForStudent(studentId, {
         onlyPublished: true,
       });
       setTests(list);
+      if (list.length === 0) {
+        message.info("Chưa có bài kiểm tra nào dành cho bạn");
+      }
     } catch (err) {
-      console.error(err);
+      console.error("Error loading tests:", err);
       message.error(err.message || "Không thể tải danh sách bài kiểm tra.");
     } finally {
       setLoadingTests(false);
@@ -115,44 +121,38 @@ export default function SubmitExamTestPage() {
   const testsByStatus = useMemo(() => {
     const now = dayjs();
     const all = tests || [];
-
     return {
       all,
       available: all.filter((t) => {
         if (t.hasSubmitted) return false;
         if (!t.deadline) return true;
-        return now.isBefore(dayjs(t.deadline.toDate?.() || t.deadline));
+        const deadline = t.deadline?.toDate
+          ? t.deadline.toDate()
+          : new Date(t.deadline);
+        return now.isBefore(dayjs(deadline));
       }),
       submitted: all.filter((t) => t.hasSubmitted),
       expired: all.filter((t) => {
         if (t.hasSubmitted) return false;
         if (!t.deadline) return false;
-        return now.isAfter(dayjs(t.deadline.toDate?.() || t.deadline));
+        const deadline = t.deadline?.toDate
+          ? t.deadline.toDate()
+          : new Date(t.deadline);
+        return now.isAfter(dayjs(deadline));
       }),
     };
   }, [tests]);
 
-  // Thống kê
+  // Thống kê (avgScore hiện không đọc được từ examTests vì tách collection -> để 0)
   const stats = useMemo(() => {
-    const submittedTests = testsByStatus.submitted;
-    const avgScore =
-      submittedTests.length > 0
-        ? submittedTests.reduce((sum, test) => {
-            const submissions = test.studentSubmissions?.find(
-              (s) => s.studentId === studentId
-            );
-            return sum + (submissions?.percentage || 0);
-          }, 0) / submittedTests.length
-        : 0;
-
     return {
       total: tests.length,
       available: testsByStatus.available.length,
       submitted: testsByStatus.submitted.length,
       expired: testsByStatus.expired.length,
-      avgScore: Math.round(avgScore),
+      avgScore: 0,
     };
-  }, [tests, testsByStatus, studentId]);
+  }, [tests, testsByStatus]);
 
   // Bắt đầu làm bài
   const handleStartTest = async (test) => {
@@ -174,6 +174,7 @@ export default function SubmitExamTestPage() {
           setTimeLeft((prev) => {
             if (prev <= 1) {
               clearInterval(interval);
+              setTimerInterval(null);
               handleAutoSubmit();
               return 0;
             }
@@ -186,7 +187,7 @@ export default function SubmitExamTestPage() {
       setTestModal(true);
       message.success("Bài kiểm tra đã bắt đầu. Chúc bạn làm bài tốt!");
     } catch (err) {
-      console.error(err);
+      console.error("Error starting test:", err);
       message.error(err.message || "Không thể bắt đầu bài kiểm tra.");
     } finally {
       setLoading(false);
@@ -196,7 +197,6 @@ export default function SubmitExamTestPage() {
   // Tự động nộp bài khi hết giờ
   const handleAutoSubmit = useCallback(async () => {
     if (!selectedTest) return;
-
     message.warning("Hết thời gian! Bài làm sẽ được nộp tự động.");
     await handleSubmitTest(true);
   }, [selectedTest]);
@@ -213,22 +213,32 @@ export default function SubmitExamTestPage() {
   const handleSubmitTest = async (isAutoSubmit = false) => {
     if (!selectedTest) return;
 
+    console.log("[SubmitExamTestPage] handleSubmitTest called", {
+      isAutoSubmit,
+      selectedTestId: selectedTest?.id,
+    });
+
     const submitAction = async () => {
       try {
         setSubmitting(true);
-
         const answers = Object.values(testAnswers);
+
+        console.log("[SubmitExamTestPage] submitting", {
+          examId: selectedTest.id,
+          studentId,
+          answered: answers.length,
+        });
+
         const result = await submitExamTest(
           selectedTest.id,
           studentId,
-          answers
+          answers,
+          startTime
         );
 
-        // Dọn dẹp timer
-        if (timerInterval) {
-          clearInterval(timerInterval);
-          setTimerInterval(null);
-        }
+        console.log("[SubmitExamTestPage] submit result", result);
+
+        clearTimer();
 
         const timeSpent = startTime
           ? Math.round((new Date() - startTime) / 1000 / 60)
@@ -250,54 +260,16 @@ export default function SubmitExamTestPage() {
         setTimeLeft(0);
         setStartTime(null);
 
-        // Reload danh sách
         loadTests();
       } catch (err) {
-        console.error(err);
+        console.error("[SubmitExamTestPage] Error submitting test:", err);
         message.error(err.message || "Không thể nộp bài.");
       } finally {
         setSubmitting(false);
       }
     };
 
-    if (isAutoSubmit) {
-      await submitAction();
-    } else {
-      const answeredCount = Object.keys(testAnswers).length;
-      const totalQuestions = selectedTest.questions?.length || 0;
-      const unansweredCount = totalQuestions - answeredCount;
-
-      Modal.confirm({
-        title: "Xác nhận nộp bài",
-        content: (
-          <div>
-            <p>
-              Bạn có chắc chắn muốn nộp bài? Sau khi nộp sẽ không thể chỉnh sửa.
-            </p>
-            <div
-              style={{
-                marginTop: 12,
-                padding: 12,
-                background: "#f5f5f5",
-                borderRadius: 6,
-              }}
-            >
-              <div>
-                ✅ Đã trả lời: {answeredCount}/{totalQuestions} câu
-              </div>
-              {unansweredCount > 0 && (
-                <div style={{ color: "#ff4d4f" }}>
-                  ⚠️ Còn {unansweredCount} câu chưa trả lời
-                </div>
-              )}
-            </div>
-          </div>
-        ),
-        okText: "Nộp bài",
-        cancelText: "Tiếp tục làm",
-        onOk: submitAction,
-      });
-    }
+    await submitAction(); // luôn chạy thẳng, không mở Modal.confirm
   };
 
   // Xem kết quả
@@ -308,7 +280,7 @@ export default function SubmitExamTestPage() {
       setSelectedResult(result);
       setResultModal(true);
     } catch (err) {
-      console.error(err);
+      console.error("Error loading result:", err);
       message.error(err.message || "Không thể tải kết quả.");
     } finally {
       setLoading(false);
@@ -338,10 +310,7 @@ export default function SubmitExamTestPage() {
       okType: "danger",
       cancelText: "Tiếp tục làm bài",
       onOk: () => {
-        if (timerInterval) {
-          clearInterval(timerInterval);
-          setTimerInterval(null);
-        }
+        clearTimer();
         setTestModal(false);
         setSelectedTest(null);
         setTestAnswers({});
@@ -388,6 +357,12 @@ export default function SubmitExamTestPage() {
                 <FaTrophy style={{ marginRight: 4 }} />
                 {record.totalPoints || 0} điểm
               </Tag>
+              {record.className && (
+                <Tag color="cyan" style={{ borderRadius: 12 }}>
+                  <FaSchool style={{ marginRight: 4 }} />
+                  {record.className}
+                </Tag>
+              )}
             </div>
             {record.description && (
               <Text
@@ -413,7 +388,6 @@ export default function SubmitExamTestPage() {
         const date = value.toDate ? value.toDate() : new Date(value);
         const isOver = dayjs().isAfter(dayjs(date));
         const timeToDeadline = dayjs(date).diff(dayjs(), "hours");
-
         return (
           <div>
             <Text strong style={{ color: isOver ? "#ff4d4f" : "#2563eb" }}>
@@ -461,30 +435,18 @@ export default function SubmitExamTestPage() {
       align: "center",
       render: (_, record) => {
         if (record.hasSubmitted) {
-          const submission = record.studentSubmissions?.find(
-            (s) => s.studentId === studentId
-          );
           return (
-            <div>
-              <Tag color="success" style={{ borderRadius: 12 }}>
-                <FaCheckCircle style={{ marginRight: 4 }} />
-                Đã nộp
-              </Tag>
-              {submission && (
-                <div style={{ marginTop: 4 }}>
-                  <Tag color="gold" style={{ borderRadius: 8, fontSize: 11 }}>
-                    {submission.percentage}%
-                  </Tag>
-                </div>
-              )}
-            </div>
+            <Tag color="success" style={{ borderRadius: 12 }}>
+              <FaCheckCircle style={{ marginRight: 4 }} />
+              Đã nộp
+            </Tag>
           );
         }
-
         if (record.deadline) {
-          const isExpired = dayjs().isAfter(
-            dayjs(record.deadline.toDate?.() || record.deadline)
-          );
+          const deadline = record.deadline.toDate
+            ? record.deadline.toDate()
+            : new Date(record.deadline);
+          const isExpired = dayjs().isAfter(dayjs(deadline));
           if (isExpired) {
             return (
               <Tag color="error" style={{ borderRadius: 12 }}>
@@ -494,7 +456,6 @@ export default function SubmitExamTestPage() {
             );
           }
         }
-
         return (
           <Tag color="processing" style={{ borderRadius: 12 }}>
             <FaPlay style={{ marginRight: 4 }} />
@@ -525,11 +486,9 @@ export default function SubmitExamTestPage() {
             </Tooltip>
           );
         }
-
         const isExpired =
           record.deadline &&
           dayjs().isAfter(dayjs(record.deadline.toDate?.() || record.deadline));
-
         return (
           <Tooltip title={isExpired ? "Đã hết hạn" : "Bắt đầu làm bài"}>
             <Button
@@ -557,7 +516,6 @@ export default function SubmitExamTestPage() {
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-
     if (hours > 0) {
       return `${hours}:${mins.toString().padStart(2, "0")}:${secs
         .toString()
@@ -578,11 +536,7 @@ export default function SubmitExamTestPage() {
 
   // Clean up timer khi component unmount
   useEffect(() => {
-    return () => {
-      if (timerInterval) {
-        clearInterval(timerInterval);
-      }
-    };
+    return () => clearTimer();
   }, [timerInterval]);
 
   return (
@@ -630,6 +584,20 @@ export default function SubmitExamTestPage() {
                 </Text>
               </div>
             </Space>
+          </Col>
+          <Col>
+            <Button
+              type="default"
+              style={{
+                background: "rgba(255,255,255,0.2)",
+                border: "1px solid rgba(255,255,255,0.3)",
+                color: "#fff",
+              }}
+              onClick={loadTests}
+              loading={loadingTests}
+            >
+              Làm mới
+            </Button>
           </Col>
         </Row>
       </Card>
@@ -788,7 +756,7 @@ export default function SubmitExamTestPage() {
         </Row>
       </Card>
 
-      {/* Danh sách bài kiểm tra */}
+      {/* Danh sách */}
       <Card
         style={{
           borderRadius: 16,
@@ -797,70 +765,82 @@ export default function SubmitExamTestPage() {
         }}
         bodyStyle={{ padding: 24 }}
       >
-        <Tabs defaultActiveKey="available">
-          <TabPane
-            tab={
-              <span>
-                <FaPlay style={{ marginRight: 6 }} />
-                Có thể làm ({testsByStatus.available.length})
-              </span>
-            }
-            key="available"
-          >
-            <Table
-              rowKey="id"
-              loading={loadingTests}
-              dataSource={testsByStatus.available}
-              columns={tableColumns}
-              pagination={{ pageSize: 8, showSizeChanger: false }}
-              locale={{
-                emptyText: (
-                  <Empty description="Không có bài kiểm tra nào có thể làm" />
-                ),
-              }}
-            />
-          </TabPane>
-          <TabPane
-            tab={
-              <span>
-                <FaCheckCircle style={{ marginRight: 6 }} />
-                Đã nộp ({testsByStatus.submitted.length})
-              </span>
-            }
-            key="submitted"
-          >
-            <Table
-              rowKey="id"
-              dataSource={testsByStatus.submitted}
-              columns={tableColumns}
-              pagination={{ pageSize: 8, showSizeChanger: false }}
-              locale={{
-                emptyText: <Empty description="Chưa nộp bài kiểm tra nào" />,
-              }}
-            />
-          </TabPane>
-          <TabPane
-            tab={
-              <span>
-                <FaTimesCircle style={{ marginRight: 6 }} />
-                Hết hạn ({testsByStatus.expired.length})
-              </span>
-            }
-            key="expired"
-          >
-            <Table
-              rowKey="id"
-              dataSource={testsByStatus.expired}
-              columns={tableColumns}
-              pagination={{ pageSize: 8, showSizeChanger: false }}
-              locale={{
-                emptyText: (
-                  <Empty description="Không có bài kiểm tra hết hạn" />
-                ),
-              }}
-            />
-          </TabPane>
-        </Tabs>
+        <Spin spinning={loadingTests} tip="Đang tải danh sách bài kiểm tra...">
+          <Tabs defaultActiveKey="available">
+            <TabPane
+              tab={
+                <span>
+                  <FaPlay style={{ marginRight: 6 }} />
+                  Có thể làm ({testsByStatus.available.length})
+                </span>
+              }
+              key="available"
+            >
+              <Table
+                rowKey="id"
+                dataSource={testsByStatus.available}
+                columns={tableColumns}
+                pagination={{ pageSize: 8, showSizeChanger: false }}
+                locale={{
+                  emptyText: (
+                    <Empty
+                      description="Không có bài kiểm tra nào có thể làm"
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    />
+                  ),
+                }}
+              />
+            </TabPane>
+            <TabPane
+              tab={
+                <span>
+                  <FaCheckCircle style={{ marginRight: 6 }} />
+                  Đã nộp ({testsByStatus.submitted.length})
+                </span>
+              }
+              key="submitted"
+            >
+              <Table
+                rowKey="id"
+                dataSource={testsByStatus.submitted}
+                columns={tableColumns}
+                pagination={{ pageSize: 8, showSizeChanger: false }}
+                locale={{
+                  emptyText: (
+                    <Empty
+                      description="Chưa nộp bài kiểm tra nào"
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    />
+                  ),
+                }}
+              />
+            </TabPane>
+            <TabPane
+              tab={
+                <span>
+                  <FaTimesCircle style={{ marginRight: 6 }} />
+                  Hết hạn ({testsByStatus.expired.length})
+                </span>
+              }
+              key="expired"
+            >
+              <Table
+                rowKey="id"
+                dataSource={testsByStatus.expired}
+                columns={tableColumns}
+                pagination={{ pageSize: 8, showSizeChanger: false }}
+                locale={{
+                  emptyText: (
+                    <Empty
+                      description="Không có bài kiểm tra hết hạn"
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    />
+                  ),
+                }}
+              />
+            </TabPane>
+          </Tabs>
+        </Spin>
       </Card>
 
       {/* Modal làm bài */}
@@ -903,10 +883,7 @@ export default function SubmitExamTestPage() {
                     percent={testProgress}
                     showInfo={false}
                     size="small"
-                    strokeColor={{
-                      "0%": "#108ee9",
-                      "100%": "#52c41a",
-                    }}
+                    strokeColor={{ "0%": "#108ee9", "100%": "#52c41a" }}
                   />
                 </Col>
                 <Col span={5}>
@@ -1127,7 +1104,7 @@ export default function SubmitExamTestPage() {
         )}
       </Modal>
 
-      {/* Drawer navigation câu hỏi */}
+      {/* Drawer navigation */}
       <Drawer
         title="Danh sách câu hỏi"
         placement="right"
@@ -1153,10 +1130,7 @@ export default function SubmitExamTestPage() {
                 percent={testProgress}
                 size="small"
                 style={{ marginTop: 8 }}
-                strokeColor={{
-                  "0%": "#108ee9",
-                  "100%": "#52c41a",
-                }}
+                strokeColor={{ "0%": "#108ee9", "100%": "#52c41a" }}
               />
             </div>
 
@@ -1245,7 +1219,6 @@ export default function SubmitExamTestPage() {
       >
         {selectedResult && (
           <Space direction="vertical" size={20} style={{ width: "100%" }}>
-            {/* Tổng quan kết quả */}
             <Card size="small" style={{ borderRadius: 12 }}>
               <Row gutter={16}>
                 <Col span={6}>
@@ -1292,7 +1265,7 @@ export default function SubmitExamTestPage() {
                   <Statistic
                     title="Thời gian nộp"
                     value={dayjs(
-                      selectedResult.submittedAt.toDate?.() ||
+                      selectedResult.submittedAt?.toDate?.() ||
                         selectedResult.submittedAt
                     ).format("HH:mm DD/MM")}
                     prefix={<FaClock />}
@@ -1300,7 +1273,6 @@ export default function SubmitExamTestPage() {
                 </Col>
               </Row>
 
-              {/* Đánh giá */}
               <div style={{ marginTop: 16, textAlign: "center" }}>
                 <Tag
                   color={
@@ -1325,7 +1297,6 @@ export default function SubmitExamTestPage() {
               </div>
             </Card>
 
-            {/* Chi tiết từng câu */}
             <Card
               size="small"
               title="Chi tiết bài làm"
@@ -1358,18 +1329,8 @@ export default function SubmitExamTestPage() {
                             color={answer.isCorrect ? "success" : "error"}
                             style={{ borderRadius: 10 }}
                           >
-                            {answer.isCorrect ? (
-                              <>
-                                <FaCheckCircle style={{ marginRight: 4 }} />
-                                Đúng
-                              </>
-                            ) : (
-                              <>
-                                <FaTimesCircle style={{ marginRight: 4 }} />
-                                Sai
-                              </>
-                            )}
-                            ({answer.score}/{answer.maxScore} điểm)
+                            {answer.isCorrect ? "Đúng" : "Sai"} ({answer.score}/
+                            {answer.maxScore} điểm)
                           </Tag>
                         </Space>
                       }
@@ -1378,13 +1339,13 @@ export default function SubmitExamTestPage() {
                           <div style={{ marginBottom: 8 }}>
                             <Text strong>Câu trả lời của bạn: </Text>
                             {answer.selectedIndexes?.length > 0 ? (
-                              answer.selectedIndexes.map((idx) => (
+                              answer.selectedIndexes.map((i) => (
                                 <Tag
-                                  key={idx}
+                                  key={i}
                                   color={answer.isCorrect ? "success" : "error"}
-                                  style={{ marginRight: 4, borderRadius: 8 }}
+                                  style={{ borderRadius: 8 }}
                                 >
-                                  {String.fromCharCode(65 + idx)}
+                                  {String.fromCharCode(65 + i)}
                                 </Tag>
                               ))
                             ) : (
@@ -1395,13 +1356,13 @@ export default function SubmitExamTestPage() {
                           </div>
                           <div>
                             <Text strong>Đáp án đúng: </Text>
-                            {answer.correctIndexes?.map((idx) => (
+                            {answer.correctIndexes?.map((i) => (
                               <Tag
-                                key={idx}
+                                key={i}
                                 color="success"
-                                style={{ marginRight: 4, borderRadius: 8 }}
+                                style={{ borderRadius: 8 }}
                               >
-                                {String.fromCharCode(65 + idx)}
+                                {String.fromCharCode(65 + i)}
                               </Tag>
                             ))}
                           </div>
@@ -1421,7 +1382,6 @@ export default function SubmitExamTestPage() {
           border-color: #1890ff !important;
           box-shadow: 0 2px 8px rgba(24, 144, 255, 0.2);
         }
-
         .answer-option.ant-radio-wrapper-checked {
           border-color: #52c41a !important;
           background-color: #f6ffed !important;

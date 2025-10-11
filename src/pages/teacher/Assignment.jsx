@@ -20,7 +20,12 @@ import {
   Tabs,
   Tag,
   Tooltip,
-  Typography, // thêm
+  Typography,
+  Dropdown,
+  Menu,
+  Switch,
+  Alert,
+  Progress,
 } from "antd";
 import {
   FaBookReader,
@@ -34,6 +39,19 @@ import {
   FaPlus,
   FaQuestionCircle,
   FaTrash,
+  FaShieldAlt,
+  FaGlobe,
+  FaUsers,
+  FaLock,
+  FaEllipsisV,
+  FaHistory,
+  FaBell,
+  FaPlay,
+  FaPause,
+  FaStop,
+  FaFileAlt,
+  FaExclamationTriangle,
+  FaInfoCircle,
 } from "react-icons/fa";
 import dayjs from "dayjs";
 import { useAuth } from "../../context/AuthContext";
@@ -44,6 +62,15 @@ import {
   deleteExamTest,
   listExamTestsByClass,
   updateExamTest,
+  updateExamTestVisibility,
+  getExamTestVisibilityHistory,
+  updateExamTestStatus,
+  getExamTestStatusHistory,
+  autoCloseExpiredExamTests,
+  getExamTestsNearDeadline,
+  EXAM_VISIBILITY_STATUS,
+  EXAM_TEST_STATUS,
+  getClassesForExamCreation,
 } from "../../services/teacherServices/examTestService";
 
 const { Title, Text, Paragraph } = Typography;
@@ -57,6 +84,50 @@ const buildDefaultQuestion = () => ({
   options: ["", ""],
 });
 
+// Mapping visibility status để hiển thị
+const VISIBILITY_CONFIG = {
+  [EXAM_VISIBILITY_STATUS.PUBLIC]: {
+    label: "Công khai",
+    color: "success",
+    icon: <FaGlobe />,
+    description: "Tất cả mọi người có thể thấy và làm bài",
+  },
+  [EXAM_VISIBILITY_STATUS.ONLY_CLASS]: {
+    label: "Chỉ lớp học",
+    color: "processing",
+    icon: <FaUsers />,
+    description: "Chỉ học sinh trong lớp mới thấy và làm được",
+  },
+  [EXAM_VISIBILITY_STATUS.PRIVATE]: {
+    label: "Riêng tư",
+    color: "default",
+    icon: <FaLock />,
+    description: "Chỉ giáo viên tạo ra mới thấy được",
+  },
+};
+
+// Mapping status để hiển thị
+const STATUS_CONFIG = {
+  [EXAM_TEST_STATUS.DRAFT]: {
+    label: "Bản nháp",
+    color: "default",
+    icon: <FaFileAlt />,
+    description: "Bài kiểm tra chưa được phát hành",
+  },
+  [EXAM_TEST_STATUS.PUBLISHED]: {
+    label: "Đã phát hành",
+    color: "success",
+    icon: <FaPlay />,
+    description: "Bài kiểm tra đang mở cho học sinh làm",
+  },
+  [EXAM_TEST_STATUS.CLOSED]: {
+    label: "Đã đóng",
+    color: "error",
+    icon: <FaStop />,
+    description: "Bài kiểm tra đã đóng, không thể làm thêm",
+  },
+};
+
 export default function TeacherAssignment() {
   const { currentUser } = useAuth();
   const teacherId =
@@ -65,7 +136,7 @@ export default function TeacherAssignment() {
     currentUser?.teacherId ||
     localStorage.getItem("teacherId") ||
     localStorage.getItem("uid") ||
-    "teacher_demo";
+    "yLIKxJID7ZgpDpfyxRF5lDBlNr72"; // Demo teacher ID
 
   const [classes, setClasses] = useState([]);
   const [selectedClassId, setSelectedClassId] = useState(null);
@@ -74,6 +145,7 @@ export default function TeacherAssignment() {
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
 
   const [tests, setTests] = useState([]);
+  const [nearDeadlineTests, setNearDeadlineTests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingClasses, setLoadingClasses] = useState(false);
   const [loadingTests, setLoadingTests] = useState(false);
@@ -81,17 +153,53 @@ export default function TeacherAssignment() {
   const [createModal, setCreateModal] = useState(false);
   const [editModal, setEditModal] = useState(false);
   const [viewModal, setViewModal] = useState(false);
+  const [visibilityModal, setVisibilityModal] = useState(false);
+  const [visibilityHistoryModal, setVisibilityHistoryModal] = useState(false);
+  const [statusModal, setStatusModal] = useState(false);
+  const [statusHistoryModal, setStatusHistoryModal] = useState(false);
 
   const [selectedTest, setSelectedTest] = useState(null);
+  const [visibilityHistory, setVisibilityHistory] = useState(null);
+  const [statusHistory, setStatusHistory] = useState(null);
+  const [updatingVisibility, setUpdatingVisibility] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   const [createForm] = Form.useForm();
   const [editForm] = Form.useForm();
+  const [visibilityForm] = Form.useForm();
+  const [statusForm] = Form.useForm();
+
+  // Load các bài sắp hết hạn
+  const loadNearDeadlineTests = useCallback(async () => {
+    if (!teacherId) return;
+    try {
+      const nearTests = await getExamTestsNearDeadline(teacherId, 24); // 24 giờ trước
+      setNearDeadlineTests(nearTests);
+    } catch (err) {
+      console.error("Error loading near deadline tests:", err);
+    }
+  }, [teacherId]);
+
+  // Tự động đóng bài quá hạn
+  const handleAutoCloseExpired = useCallback(async () => {
+    try {
+      const expiredTests = await autoCloseExpiredExamTests(teacherId);
+      if (expiredTests.length > 0) {
+        message.info(
+          `Đã tự động đóng ${expiredTests.length} bài kiểm tra quá hạn`
+        );
+        loadTests(); // Reload để cập nhật trạng thái
+      }
+    } catch (err) {
+      console.error("Error auto-closing expired tests:", err);
+    }
+  }, [teacherId]);
 
   const loadClasses = useCallback(async () => {
     if (!teacherId) return;
     setLoadingClasses(true);
     try {
-      const cls = await getTeacherHomeRoomClasses(teacherId);
+      const cls = await getClassesForExamCreation(teacherId);
       setClasses(cls);
       if (cls?.length) {
         setSelectedClassId((prev) => prev || cls[0].id);
@@ -164,7 +272,9 @@ export default function TeacherAssignment() {
 
   useEffect(() => {
     loadTests();
-  }, [loadTests]);
+    loadNearDeadlineTests();
+    handleAutoCloseExpired(); // Tự động check và đóng bài quá hạn
+  }, [loadTests, loadNearDeadlineTests, handleAutoCloseExpired]);
 
   const currentClass = useMemo(
     () => classes.find((c) => c.id === selectedClassId) || null,
@@ -201,9 +311,16 @@ export default function TeacherAssignment() {
     const all = tests || [];
     return {
       all,
-      draft: all.filter((t) => t.status === "draft"),
-      published: all.filter((t) => t.status === "published"),
-      closed: all.filter((t) => t.status === "closed"),
+      draft: all.filter((t) => t.status === EXAM_TEST_STATUS.DRAFT),
+      published: all.filter((t) => t.status === EXAM_TEST_STATUS.PUBLISHED),
+      closed: all.filter((t) => t.status === EXAM_TEST_STATUS.CLOSED),
+      expired: all.filter((t) => {
+        if (!t.deadline) return false;
+        const deadline = t.deadline.toDate
+          ? t.deadline.toDate()
+          : new Date(t.deadline);
+        return new Date() > deadline && t.status === EXAM_TEST_STATUS.PUBLISHED;
+      }),
     };
   }, [tests]);
 
@@ -212,7 +329,8 @@ export default function TeacherAssignment() {
     createForm.setFieldsValue({
       title: "",
       subjectId: selectedSubjectId || undefined,
-      visibility: "class",
+      visibility: EXAM_VISIBILITY_STATUS.ONLY_CLASS,
+      status: EXAM_TEST_STATUS.PUBLISHED,
       durationMinutes: 45,
       questions: [buildDefaultQuestion()],
     });
@@ -227,7 +345,8 @@ export default function TeacherAssignment() {
       subjectId: values.subjectId,
       deadline: values.deadline ? values.deadline.toDate() : null,
       durationMinutes: values.durationMinutes || null,
-      visibility: values.visibility || "class",
+      visibility: values.visibility || EXAM_VISIBILITY_STATUS.ONLY_CLASS,
+      status: values.status || EXAM_TEST_STATUS.PUBLISHED,
       questions: (values.questions || []).map((q, idx) => ({
         question: q.question,
         options: (q.options || []).map((opt) => opt || ""),
@@ -269,6 +388,7 @@ export default function TeacherAssignment() {
       message.success("Đã tạo bài kiểm tra.");
       setCreateModal(false);
       loadTests();
+      loadNearDeadlineTests();
     } catch (err) {
       console.error(err);
       message.error(err.message || "Không thể tạo bài kiểm tra.");
@@ -280,7 +400,8 @@ export default function TeacherAssignment() {
     editForm.setFieldsValue({
       title: test.title,
       subjectId: test.subjectId || undefined,
-      visibility: test.visibility || "class",
+      visibility: test.visibility || EXAM_VISIBILITY_STATUS.ONLY_CLASS,
+      status: test.status || EXAM_TEST_STATUS.PUBLISHED,
       deadline: test.deadline
         ? dayjs(test.deadline.toDate?.() || test.deadline)
         : null,
@@ -308,6 +429,7 @@ export default function TeacherAssignment() {
       setEditModal(false);
       setSelectedTest(null);
       loadTests();
+      loadNearDeadlineTests();
     } catch (err) {
       console.error(err);
       message.error(err.message || "Không thể cập nhật bài kiểm tra.");
@@ -325,43 +447,253 @@ export default function TeacherAssignment() {
     }
   };
 
+  // Xử lý chỉnh sửa visibility
+  const handleOpenVisibilityModal = (test) => {
+    setSelectedTest(test);
+    visibilityForm.setFieldsValue({
+      visibility: test.visibility || EXAM_VISIBILITY_STATUS.ONLY_CLASS,
+      note: "",
+      sendNotification: true,
+    });
+    setVisibilityModal(true);
+  };
+
+  const handleUpdateVisibility = async (values) => {
+    if (!selectedTest) return;
+    try {
+      setUpdatingVisibility(true);
+      await updateExamTestVisibility(
+        selectedTest.id,
+        teacherId,
+        values.visibility,
+        {
+          note: values.note,
+          sendNotification: values.sendNotification,
+        }
+      );
+      message.success("Đã cập nhật quyền truy cập bài kiểm tra.");
+      setVisibilityModal(false);
+      setSelectedTest(null);
+      loadTests();
+    } catch (err) {
+      console.error(err);
+      message.error(err.message || "Không thể cập nhật quyền truy cập.");
+    } finally {
+      setUpdatingVisibility(false);
+    }
+  };
+
+  // Xử lý chỉnh sửa status
+  const handleOpenStatusModal = (test) => {
+    setSelectedTest(test);
+    statusForm.setFieldsValue({
+      status: test.status || EXAM_TEST_STATUS.DRAFT,
+      reason: "",
+      note: "",
+      sendNotification: true,
+    });
+    setStatusModal(true);
+  };
+
+  const handleUpdateStatus = async (values) => {
+    if (!selectedTest) return;
+    try {
+      setUpdatingStatus(true);
+      await updateExamTestStatus(selectedTest.id, teacherId, values.status, {
+        reason: values.reason,
+        note: values.note,
+        sendNotification: values.sendNotification,
+      });
+      message.success("Đã cập nhật trạng thái bài kiểm tra.");
+      setStatusModal(false);
+      setSelectedTest(null);
+      loadTests();
+      loadNearDeadlineTests();
+    } catch (err) {
+      console.error(err);
+      message.error(err.message || "Không thể cập nhật trạng thái.");
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  // Xem lịch sử thay đổi visibility
+  const handleViewVisibilityHistory = async (test) => {
+    try {
+      setLoading(true);
+      const history = await getExamTestVisibilityHistory(test.id);
+      setVisibilityHistory(history);
+      setSelectedTest(test);
+      setVisibilityHistoryModal(true);
+    } catch (err) {
+      console.error(err);
+      message.error(err.message || "Không thể tải lịch sử thay đổi.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Xem lịch sử thay đổi status
+  const handleViewStatusHistory = async (test) => {
+    try {
+      setLoading(true);
+      const history = await getExamTestStatusHistory(test.id);
+      setStatusHistory(history);
+      setSelectedTest(test);
+      setStatusHistoryModal(true);
+    } catch (err) {
+      console.error(err);
+      message.error(err.message || "Không thể tải lịch sử trạng thái.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Menu dropdown cho actions
+  const getActionMenu = (record) => (
+    <Menu>
+      <Menu.Item
+        key="view"
+        icon={<FaEye />}
+        onClick={() => {
+          setSelectedTest(record);
+          setViewModal(true);
+        }}
+      >
+        Xem chi tiết
+      </Menu.Item>
+      <Menu.Item
+        key="edit"
+        icon={<FaEdit />}
+        onClick={() => handleOpenEdit(record)}
+      >
+        Chỉnh sửa
+      </Menu.Item>
+      <Menu.Divider />
+      <Menu.Item
+        key="status"
+        icon={<FaPlay />}
+        onClick={() => handleOpenStatusModal(record)}
+      >
+        Trạng thái
+      </Menu.Item>
+      <Menu.Item
+        key="visibility"
+        icon={<FaShieldAlt />}
+        onClick={() => handleOpenVisibilityModal(record)}
+      >
+        Quyền truy cập
+      </Menu.Item>
+      <Menu.Divider />
+      <Menu.Item
+        key="status-history"
+        icon={<FaHistory />}
+        onClick={() => handleViewStatusHistory(record)}
+      >
+        Lịch sử trạng thái
+      </Menu.Item>
+      <Menu.Item
+        key="visibility-history"
+        icon={<FaHistory />}
+        onClick={() => handleViewVisibilityHistory(record)}
+      >
+        Lịch sử quyền truy cập
+      </Menu.Item>
+      <Menu.Divider />
+      <Menu.Item
+        key="delete"
+        icon={<FaTrash />}
+        danger
+        onClick={() => {
+          Modal.confirm({
+            title: "Xoá bài kiểm tra",
+            content: "Bạn có chắc chắn muốn xoá bài kiểm tra này?",
+            okText: "Xoá",
+            okType: "danger",
+            cancelText: "Huỷ",
+            onOk: () => handleDelete(record.id),
+          });
+        }}
+      >
+        Xoá bài kiểm tra
+      </Menu.Item>
+    </Menu>
+  );
+
   const tableColumns = [
     {
       title: "Bài kiểm tra",
       dataIndex: "title",
       key: "title",
-      render: (text, record) => (
-        <div style={{ display: "flex", gap: 12 }}>
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 10,
-              background: "linear-gradient(135deg,#667eea,#764ba2)",
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 18,
-            }}
-          >
-            <FaClipboardList />
-          </div>
-          <div>
-            <Text strong style={{ fontSize: 15, color: "#1f2937" }}>
-              {text}
-            </Text>
-            <div style={{ marginTop: 4 }}>
-              <Tag color="geekblue" style={{ borderRadius: 12 }}>
-                {subjectLookup.get(record.subjectId) || "Chưa có môn"}
-              </Tag>
-              <Tag color="purple" style={{ borderRadius: 12 }}>
-                {record.questions?.length || 0} câu hỏi
-              </Tag>
+      render: (text, record) => {
+        const isExpired =
+          record.deadline &&
+          new Date() >
+            (record.deadline.toDate?.() || new Date(record.deadline)) &&
+          record.status === EXAM_TEST_STATUS.PUBLISHED;
+
+        return (
+          <div style={{ display: "flex", gap: 12 }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 10,
+                background: isExpired
+                  ? "linear-gradient(135deg,#ef4444,#dc2626)"
+                  : "linear-gradient(135deg,#667eea,#764ba2)",
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 18,
+              }}
+            >
+              {isExpired ? <FaExclamationTriangle /> : <FaClipboardList />}
+            </div>
+            <div>
+              <Text strong style={{ fontSize: 15, color: "#1f2937" }}>
+                {text}
+              </Text>
+              {isExpired && (
+                <div style={{ marginTop: 2 }}>
+                  <Tag color="red" size="small">
+                    Quá hạn - Cần đóng
+                  </Tag>
+                </div>
+              )}
+              <div style={{ marginTop: 4 }}>
+                <Tag color="geekblue" style={{ borderRadius: 12 }}>
+                  {subjectLookup.get(record.subjectId) || "Chưa có môn"}
+                </Tag>
+                <Tag color="purple" style={{ borderRadius: 12 }}>
+                  {record.questions?.length || 0} câu hỏi
+                </Tag>
+                {/* Hiển thị visibility */}
+                <Tag
+                  color={
+                    VISIBILITY_CONFIG[
+                      record.visibility || EXAM_VISIBILITY_STATUS.ONLY_CLASS
+                    ]?.color
+                  }
+                  style={{ borderRadius: 12 }}
+                  icon={
+                    VISIBILITY_CONFIG[
+                      record.visibility || EXAM_VISIBILITY_STATUS.ONLY_CLASS
+                    ]?.icon
+                  }
+                >
+                  {
+                    VISIBILITY_CONFIG[
+                      record.visibility || EXAM_VISIBILITY_STATUS.ONLY_CLASS
+                    ]?.label
+                  }
+                </Tag>
+              </div>
             </div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       title: "Tổng điểm",
@@ -385,14 +717,33 @@ export default function TeacherAssignment() {
         if (!value) return <Text type="secondary">Không giới hạn</Text>;
         const date = value.toDate ? value.toDate() : new Date(value);
         const isOver = dayjs().isAfter(dayjs(date));
+        const timeLeft = dayjs(date).diff(dayjs(), "hour");
+        const isNearDeadline = timeLeft <= 24 && timeLeft > 0;
+
         return (
           <div>
-            <Text strong style={{ color: isOver ? "#ff4d4f" : "#2563eb" }}>
+            <Text
+              strong
+              style={{
+                color: isOver
+                  ? "#ff4d4f"
+                  : isNearDeadline
+                  ? "#faad14"
+                  : "#2563eb",
+              }}
+            >
               {dayjs(date).format("DD/MM/YYYY HH:mm")}
             </Text>
             <div>
-              <Tag color={isOver ? "red" : "blue"} style={{ borderRadius: 10 }}>
-                {isOver ? "Hết hạn" : "Còn hạn"}
+              <Tag
+                color={isOver ? "red" : isNearDeadline ? "orange" : "blue"}
+                style={{ borderRadius: 10 }}
+              >
+                {isOver
+                  ? "Hết hạn"
+                  : isNearDeadline
+                  ? `Còn ${timeLeft}h`
+                  : "Còn hạn"}
               </Tag>
             </div>
           </div>
@@ -421,21 +772,15 @@ export default function TeacherAssignment() {
       key: "status",
       align: "center",
       render: (status) => {
-        const color =
-          status === "published"
-            ? "success"
-            : status === "closed"
-            ? "default"
-            : "warning";
-        const text =
-          status === "published"
-            ? "Đã phát hành"
-            : status === "closed"
-            ? "Đã đóng"
-            : "Bản nháp";
+        const config =
+          STATUS_CONFIG[status] || STATUS_CONFIG[EXAM_TEST_STATUS.DRAFT];
         return (
-          <Tag color={color} style={{ borderRadius: 12 }}>
-            {text}
+          <Tag
+            color={config.color}
+            style={{ borderRadius: 12 }}
+            icon={config.icon}
+          >
+            {config.label}
           </Tag>
         );
       },
@@ -443,36 +788,20 @@ export default function TeacherAssignment() {
     {
       title: "Thao tác",
       key: "actions",
-      width: 160,
+      width: 80,
       align: "center",
       render: (_text, record) => (
-        <Space>
-          <Tooltip title="Xem chi tiết">
-            <Button
-              shape="circle"
-              icon={<FaEye />}
-              onClick={() => {
-                setSelectedTest(record);
-                setViewModal(true);
-              }}
-            />
-          </Tooltip>
-          <Tooltip title="Chỉnh sửa">
-            <Button
-              shape="circle"
-              icon={<FaEdit />}
-              onClick={() => handleOpenEdit(record)}
-            />
-          </Tooltip>
-          <Popconfirm
-            title="Xoá bài kiểm tra này?"
-            okText="Xoá"
-            cancelText="Huỷ"
-            onConfirm={() => handleDelete(record.id)}
-          >
-            <Button shape="circle" danger icon={<FaTrash />} />
-          </Popconfirm>
-        </Space>
+        <Dropdown
+          overlay={getActionMenu(record)}
+          trigger={["click"]}
+          placement="bottomRight"
+        >
+          <Button
+            shape="circle"
+            icon={<FaEllipsisV />}
+            style={{ border: "none" }}
+          />
+        </Dropdown>
       ),
     },
   ];
@@ -684,6 +1013,25 @@ export default function TeacherAssignment() {
         padding: 24,
       }}
     >
+      {/* Alert cho bài sắp hết hạn */}
+      {nearDeadlineTests.length > 0 && (
+        <Alert
+          message={`Có ${nearDeadlineTests.length} bài kiểm tra sắp hết hạn trong 24h tới`}
+          description={nearDeadlineTests.map((test) => test.title).join(", ")}
+          type="warning"
+          icon={<FaClock />}
+          showIcon
+          closable
+          style={{ marginBottom: 24 }}
+          action={
+            <Button size="small" type="link" onClick={loadNearDeadlineTests}>
+              Làm mới
+            </Button>
+          }
+        />
+      )}
+
+      {/* Header */}
       <Card
         style={{
           borderRadius: 20,
@@ -732,7 +1080,7 @@ export default function TeacherAssignment() {
               >
                 {classes.map((cls) => (
                   <Option key={cls.id} value={cls.id}>
-                    {cls.name || cls.id}
+                    {cls.displayName || cls.name || cls.id}
                   </Option>
                 ))}
               </Select>
@@ -768,6 +1116,7 @@ export default function TeacherAssignment() {
         </Row>
       </Card>
 
+      {/* Stats */}
       <Card
         style={{
           borderRadius: 16,
@@ -778,7 +1127,7 @@ export default function TeacherAssignment() {
         bodyStyle={{ padding: 24 }}
       >
         <Row gutter={[16, 16]}>
-          <Col xs={24} md={8}>
+          <Col xs={24} md={6}>
             <Card
               style={{ borderRadius: 14 }}
               bodyStyle={{ display: "flex", gap: 16, alignItems: "center" }}
@@ -806,7 +1155,7 @@ export default function TeacherAssignment() {
               </div>
             </Card>
           </Col>
-          <Col xs={24} md={8}>
+          <Col xs={24} md={6}>
             <Card
               style={{ borderRadius: 14 }}
               bodyStyle={{ display: "flex", gap: 16, alignItems: "center" }}
@@ -834,7 +1183,7 @@ export default function TeacherAssignment() {
               </div>
             </Card>
           </Col>
-          <Col xs={24} md={8}>
+          <Col xs={24} md={6}>
             <Card
               style={{ borderRadius: 14 }}
               bodyStyle={{ display: "flex", gap: 16, alignItems: "center" }}
@@ -862,9 +1211,38 @@ export default function TeacherAssignment() {
               </div>
             </Card>
           </Col>
+          <Col xs={24} md={6}>
+            <Card
+              style={{ borderRadius: 14 }}
+              bodyStyle={{ display: "flex", gap: 16, alignItems: "center" }}
+            >
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 14,
+                  background: "#fee2e2",
+                  color: "#dc2626",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 22,
+                }}
+              >
+                <FaExclamationTriangle />
+              </div>
+              <div>
+                <Text type="secondary">Sắp hết hạn</Text>
+                <Title level={4} style={{ margin: 0 }}>
+                  {nearDeadlineTests?.length || 0}
+                </Title>
+              </div>
+            </Card>
+          </Col>
         </Row>
       </Card>
 
+      {/* Table - đã cập nhật */}
       <Card
         style={{
           borderRadius: 16,
@@ -923,9 +1301,24 @@ export default function TeacherAssignment() {
               }}
             />
           </TabPane>
+          <TabPane
+            tab={`Quá hạn (${testsByStatus.expired.length})`}
+            key="expired"
+          >
+            <Table
+              rowKey="id"
+              dataSource={testsByStatus.expired}
+              columns={tableColumns}
+              pagination={{ pageSize: 6 }}
+              locale={{
+                emptyText: <Empty description="Không có bài quá hạn" />,
+              }}
+            />
+          </TabPane>
         </Tabs>
       </Card>
 
+      {/* Modal tạo mới - đã cập nhật status */}
       <Modal
         title={
           <Space>
@@ -943,7 +1336,10 @@ export default function TeacherAssignment() {
           layout="vertical"
           form={createForm}
           onFinish={handleCreate}
-          initialValues={{ visibility: "class" }}
+          initialValues={{
+            visibility: EXAM_VISIBILITY_STATUS.ONLY_CLASS,
+            status: EXAM_TEST_STATUS.PUBLISHED,
+          }}
         >
           <Row gutter={16}>
             <Col span={12}>
@@ -971,7 +1367,7 @@ export default function TeacherAssignment() {
           </Row>
 
           <Row gutter={16}>
-            <Col span={8}>
+            <Col span={6}>
               <Form.Item name="deadline" label="Hạn làm bài">
                 <DatePicker
                   showTime
@@ -980,17 +1376,36 @@ export default function TeacherAssignment() {
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col span={6}>
               <Form.Item name="durationMinutes" label="Thời lượng (phút)">
                 <InputNumber min={10} step={5} style={{ width: "100%" }} />
               </Form.Item>
             </Col>
-            <Col span={8}>
-              <Form.Item name="visibility" label="Phạm vi hiển thị">
+            <Col span={6}>
+              <Form.Item name="status" label="Trạng thái">
                 <Select>
-                  <Option value="class">Trong lớp</Option>
-                  <Option value="public">Công khai</Option>
-                  <Option value="private">Riêng tư</Option>
+                  {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                    <Option key={key} value={key}>
+                      <Space>
+                        {config.icon}
+                        {config.label}
+                      </Space>
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="visibility" label="Quyền truy cập">
+                <Select>
+                  {Object.entries(VISIBILITY_CONFIG).map(([key, config]) => (
+                    <Option key={key} value={key}>
+                      <Space>
+                        {config.icon}
+                        {config.label}
+                      </Space>
+                    </Option>
+                  ))}
                 </Select>
               </Form.Item>
             </Col>
@@ -1016,6 +1431,7 @@ export default function TeacherAssignment() {
         </Form>
       </Modal>
 
+      {/* Modal chỉnh sửa - đã cập nhật status */}
       <Modal
         title={
           <Space>
@@ -1059,7 +1475,7 @@ export default function TeacherAssignment() {
           </Row>
 
           <Row gutter={16}>
-            <Col span={8}>
+            <Col span={6}>
               <Form.Item name="deadline" label="Hạn làm bài">
                 <DatePicker
                   showTime
@@ -1068,17 +1484,36 @@ export default function TeacherAssignment() {
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col span={6}>
               <Form.Item name="durationMinutes" label="Thời lượng (phút)">
                 <InputNumber min={10} step={5} style={{ width: "100%" }} />
               </Form.Item>
             </Col>
-            <Col span={8}>
-              <Form.Item name="visibility" label="Phạm vi hiển thị">
+            <Col span={6}>
+              <Form.Item name="status" label="Trạng thái">
                 <Select>
-                  <Option value="class">Trong lớp</Option>
-                  <Option value="public">Công khai</Option>
-                  <Option value="private">Riêng tư</Option>
+                  {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                    <Option key={key} value={key}>
+                      <Space>
+                        {config.icon}
+                        {config.label}
+                      </Space>
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="visibility" label="Quyền truy cập">
+                <Select>
+                  {Object.entries(VISIBILITY_CONFIG).map(([key, config]) => (
+                    <Option key={key} value={key}>
+                      <Space>
+                        {config.icon}
+                        {config.label}
+                      </Space>
+                    </Option>
+                  ))}
                 </Select>
               </Form.Item>
             </Col>
@@ -1111,6 +1546,7 @@ export default function TeacherAssignment() {
         </Form>
       </Modal>
 
+      {/* Modal xem chi tiết - giữ nguyên */}
       <Modal
         width={800}
         open={viewModal}
@@ -1153,6 +1589,42 @@ export default function TeacherAssignment() {
                   </Tag>
                 )}
                 <Tag color="purple">Tổng điểm: {selectedTestTotalPoints}</Tag>
+                <Tag
+                  color={
+                    STATUS_CONFIG[selectedTest.status || EXAM_TEST_STATUS.DRAFT]
+                      ?.color
+                  }
+                  icon={
+                    STATUS_CONFIG[selectedTest.status || EXAM_TEST_STATUS.DRAFT]
+                      ?.icon
+                  }
+                >
+                  {
+                    STATUS_CONFIG[selectedTest.status || EXAM_TEST_STATUS.DRAFT]
+                      ?.label
+                  }
+                </Tag>
+                <Tag
+                  color={
+                    VISIBILITY_CONFIG[
+                      selectedTest.visibility ||
+                        EXAM_VISIBILITY_STATUS.ONLY_CLASS
+                    ]?.color
+                  }
+                  icon={
+                    VISIBILITY_CONFIG[
+                      selectedTest.visibility ||
+                        EXAM_VISIBILITY_STATUS.ONLY_CLASS
+                    ]?.icon
+                  }
+                >
+                  {
+                    VISIBILITY_CONFIG[
+                      selectedTest.visibility ||
+                        EXAM_VISIBILITY_STATUS.ONLY_CLASS
+                    ]?.label
+                  }
+                </Tag>
               </Space>
             </Card>
             {selectedTest.description && (
@@ -1176,6 +1648,352 @@ export default function TeacherAssignment() {
           </Space>
         ) : (
           <Empty description="Không có dữ liệu" />
+        )}
+      </Modal>
+
+      {/* Modal chỉnh sửa status */}
+      <Modal
+        title={
+          <Space>
+            <FaPlay />
+            Chỉnh sửa trạng thái
+          </Space>
+        }
+        width={600}
+        open={statusModal}
+        onCancel={() => {
+          setStatusModal(false);
+          setSelectedTest(null);
+        }}
+        footer={null}
+        destroyOnClose
+      >
+        {selectedTest && (
+          <Form
+            layout="vertical"
+            form={statusForm}
+            onFinish={handleUpdateStatus}
+            initialValues={{
+              status: selectedTest.status || EXAM_TEST_STATUS.DRAFT,
+              sendNotification: true,
+            }}
+          >
+            <Card size="small" style={{ marginBottom: 16, borderRadius: 12 }}>
+              <Title level={5}>
+                <Space>
+                  <FaClipboardList />
+                  {selectedTest.title}
+                </Space>
+              </Title>
+              <Text type="secondary">
+                Trạng thái hiện tại:{" "}
+                <Tag
+                  color={
+                    STATUS_CONFIG[selectedTest.status || EXAM_TEST_STATUS.DRAFT]
+                      ?.color
+                  }
+                >
+                  {
+                    STATUS_CONFIG[selectedTest.status || EXAM_TEST_STATUS.DRAFT]
+                      ?.label
+                  }
+                </Tag>
+              </Text>
+            </Card>
+
+            <Form.Item
+              name="status"
+              label="Trạng thái mới"
+              rules={[{ required: true, message: "Chọn trạng thái" }]}
+            >
+              <Select size="large">
+                {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                  <Option key={key} value={key}>
+                    <Space style={{ width: "100%", padding: 8 }}>
+                      <div style={{ fontSize: 16 }}>{config.icon}</div>
+                      <div>
+                        <div style={{ fontWeight: "bold" }}>{config.label}</div>
+                        <div style={{ fontSize: 12, color: "#666" }}>
+                          {config.description}
+                        </div>
+                      </div>
+                    </Space>
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item name="reason" label="Lý do thay đổi (tùy chọn)">
+              <Select placeholder="Chọn lý do" allowClear>
+                <Option value="manual_close">Đóng thủ công</Option>
+                <Option value="schedule_change">Thay đổi lịch</Option>
+                <Option value="content_update">Cập nhật nội dung</Option>
+                <Option value="technical_issue">Sự cố kỹ thuật</Option>
+              </Select>
+            </Form.Item>
+
+            <Form.Item name="note" label="Ghi chú thay đổi (tùy chọn)">
+              <Input.TextArea
+                rows={3}
+                placeholder="Lý do thay đổi trạng thái..."
+              />
+            </Form.Item>
+
+            <Form.Item name="sendNotification" valuePropName="checked">
+              <Space>
+                <Switch />
+                <Space>
+                  <FaBell />
+                  <Text>Gửi thông báo khi phát hành</Text>
+                </Space>
+              </Space>
+            </Form.Item>
+
+            <Form.Item style={{ marginTop: 24, textAlign: "right" }}>
+              <Space>
+                <Button
+                  onClick={() => {
+                    setStatusModal(false);
+                    setSelectedTest(null);
+                  }}
+                >
+                  Huỷ
+                </Button>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={updatingStatus}
+                  icon={<FaPlay />}
+                >
+                  Cập nhật trạng thái
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+        )}
+      </Modal>
+
+      {/* Modal chỉnh sửa visibility - giữ nguyên */}
+      <Modal
+        title={
+          <Space>
+            <FaShieldAlt />
+            Chỉnh sửa quyền truy cập
+          </Space>
+        }
+        width={600}
+        open={visibilityModal}
+        onCancel={() => {
+          setVisibilityModal(false);
+          setSelectedTest(null);
+        }}
+        footer={null}
+        destroyOnClose
+      >
+        {selectedTest && (
+          <Form
+            layout="vertical"
+            form={visibilityForm}
+            onFinish={handleUpdateVisibility}
+            initialValues={{
+              visibility:
+                selectedTest.visibility || EXAM_VISIBILITY_STATUS.ONLY_CLASS,
+              sendNotification: true,
+            }}
+          >
+            <Card size="small" style={{ marginBottom: 16, borderRadius: 12 }}>
+              <Title level={5}>
+                <Space>
+                  <FaClipboardList />
+                  {selectedTest.title}
+                </Space>
+              </Title>
+              <Text type="secondary">
+                Trạng thái hiện tại:{" "}
+                <Tag
+                  color={
+                    VISIBILITY_CONFIG[
+                      selectedTest.visibility ||
+                        EXAM_VISIBILITY_STATUS.ONLY_CLASS
+                    ]?.color
+                  }
+                >
+                  {
+                    VISIBILITY_CONFIG[
+                      selectedTest.visibility ||
+                        EXAM_VISIBILITY_STATUS.ONLY_CLASS
+                    ]?.label
+                  }
+                </Tag>
+              </Text>
+            </Card>
+
+            <Form.Item
+              name="visibility"
+              label="Quyền truy cập mới"
+              rules={[{ required: true, message: "Chọn quyền truy cập" }]}
+            >
+              <Select size="large">
+                {Object.entries(VISIBILITY_CONFIG).map(([key, config]) => (
+                  <Option key={key} value={key}>
+                    <Space style={{ width: "100%", padding: 8 }}>
+                      <div style={{ fontSize: 16 }}>{config.icon}</div>
+                      <div>
+                        <div style={{ fontWeight: "bold" }}>{config.label}</div>
+                        <div style={{ fontSize: 12, color: "#666" }}>
+                          {config.description}
+                        </div>
+                      </div>
+                    </Space>
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item name="note" label="Ghi chú thay đổi (tùy chọn)">
+              <Input.TextArea
+                rows={3}
+                placeholder="Lý do thay đổi quyền truy cập..."
+              />
+            </Form.Item>
+
+            <Form.Item name="sendNotification" valuePropName="checked">
+              <Space>
+                <Switch />
+                <Space>
+                  <FaBell />
+                  <Text>Gửi thông báo khi chuyển sang công khai</Text>
+                </Space>
+              </Space>
+            </Form.Item>
+
+            <Form.Item style={{ marginTop: 24, textAlign: "right" }}>
+              <Space>
+                <Button
+                  onClick={() => {
+                    setVisibilityModal(false);
+                    setSelectedTest(null);
+                  }}
+                >
+                  Huỷ
+                </Button>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={updatingVisibility}
+                  icon={<FaShieldAlt />}
+                >
+                  Cập nhật quyền truy cập
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+        )}
+      </Modal>
+
+      {/* Modal xem lịch sử visibility */}
+      <Modal
+        title={
+          <Space>
+            <FaHistory />
+            Lịch sử thay đổi quyền truy cập
+          </Space>
+        }
+        width={700}
+        open={visibilityHistoryModal}
+        onCancel={() => {
+          setVisibilityHistoryModal(false);
+          setSelectedTest(null);
+          setVisibilityHistory(null);
+        }}
+        footer={null}
+      >
+        {selectedTest && visibilityHistory && (
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Card size="small" style={{ borderRadius: 12 }}>
+              <Title level={5}>
+                <Space>
+                  <FaClipboardList />
+                  {selectedTest.title}
+                </Space>
+              </Title>
+            </Card>
+
+            <Card
+              size="small"
+              style={{ borderRadius: 12 }}
+              title="Trạng thái hiện tại"
+            >
+              <Space size={16} wrap>
+                <Tag
+                  color={
+                    VISIBILITY_CONFIG[visibilityHistory.currentVisibility]
+                      ?.color
+                  }
+                  style={{ fontSize: 14, padding: "4px 12px" }}
+                >
+                  <Space>
+                    {
+                      VISIBILITY_CONFIG[visibilityHistory.currentVisibility]
+                        ?.icon
+                    }
+                    {
+                      VISIBILITY_CONFIG[visibilityHistory.currentVisibility]
+                        ?.label
+                    }
+                  </Space>
+                </Tag>
+                <Text type="secondary">
+                  Cập nhật lần cuối:{" "}
+                  {dayjs(
+                    visibilityHistory.lastUpdatedAt?.toDate?.() ||
+                      visibilityHistory.lastUpdatedAt
+                  ).format("DD/MM/YYYY HH:mm")}
+                </Text>
+              </Space>
+              <div style={{ marginTop: 8 }}>
+                <Text>
+                  {
+                    VISIBILITY_CONFIG[visibilityHistory.currentVisibility]
+                      ?.description
+                  }
+                </Text>
+              </div>
+              {visibilityHistory.changeNote && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: 12,
+                    background: "#f5f5f5",
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text strong>Ghi chú: </Text>
+                  <Text>{visibilityHistory.changeNote}</Text>
+                </div>
+              )}
+            </Card>
+
+            <Card
+              size="small"
+              style={{ borderRadius: 12 }}
+              title="Thông tin tạo"
+            >
+              <Space direction="vertical">
+                <Text>
+                  <Text strong>Ngày tạo: </Text>
+                  {dayjs(
+                    visibilityHistory.createdAt?.toDate?.() ||
+                      visibilityHistory.createdAt
+                  ).format("DD/MM/YYYY HH:mm")}
+                </Text>
+                <Text>
+                  <Text strong>Người tạo: </Text>
+                  {visibilityHistory.createdBy}
+                </Text>
+              </Space>
+            </Card>
+          </Space>
         )}
       </Modal>
     </div>

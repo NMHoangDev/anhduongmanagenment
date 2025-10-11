@@ -16,6 +16,7 @@ import {
 } from "firebase/auth";
 
 const studentsCol = collection(db, "students");
+const usersCol = collection(db, "users");
 const parentsCol = collection(db, "parents");
 const classesCol = collection(db, "classes");
 const teachersCol = collection(db, "teachers");
@@ -55,12 +56,12 @@ async function findParentByStudentId(sid) {
   return null;
 }
 
-// Trả về profile của user hiện đang đăng nhập (hoặc uid truyền vào)
+// Trả về profile của user hiện đang đăng nhập (hoặc id truyền vào)
 // includes related parent, class and homeRoomTeacher (minimal) info when available
-export async function getMyProfile(uid) {
+export async function getMyProfile(id) {
   try {
     const auth = getAuth();
-    const currentUid = uid || (auth.currentUser && auth.currentUser.uid);
+    const currentUid = id || (auth.currentUser && auth.currentUser.id);
     if (!currentUid) throw new Error("No authenticated user or uid provided");
 
     const sid = sanitizeId(currentUid);
@@ -150,6 +151,7 @@ export async function getMyClass(uid) {
   return profile ? profile.class : null;
 }
 
+// Cập nhật thông tin profile đồng bộ giữa users và students collection
 // Chỉ cho phép user chỉnh thông tin của chính họ.
 // Không cho phép thay đổi các trường nhạy cảm như role, parentId, createdAt, studentId, classId, uid
 export async function updateMyProfile(uid, updates = {}) {
@@ -171,6 +173,7 @@ export async function updateMyProfile(uid, updates = {}) {
       "uid",
       "authUid",
     ];
+
     const payload = Object.keys(updates || {}).reduce((acc, k) => {
       if (!forbidden.includes(k)) acc[k] = updates[k];
       return acc;
@@ -180,12 +183,175 @@ export async function updateMyProfile(uid, updates = {}) {
       throw new Error("No allowed fields to update");
     }
 
-    const ref = doc(studentsCol, sid);
-    await updateDoc(ref, payload);
-    // return latest minimal shape
+    // Thêm timestamp cập nhật
+    payload.lastUpdated = new Date();
+
+    // Cập nhật students collection
+    const studentsRef = doc(studentsCol, sid);
+    await updateDoc(studentsRef, payload);
+
+    // Chuẩn bị payload cho users collection (chỉ các trường chung)
+    const usersPayload = {};
+    const commonFields = [
+      "name",
+      "email",
+      "gender",
+      "dob",
+      "contact",
+      "avatar",
+      "lastUpdated",
+    ];
+
+    Object.keys(payload).forEach((key) => {
+      if (commonFields.includes(key)) {
+        usersPayload[key] = payload[key];
+      }
+    });
+
+    // Cập nhật users collection nếu có dữ liệu chung
+    if (Object.keys(usersPayload).length > 0) {
+      const usersRef = doc(usersCol, sid);
+      try {
+        await updateDoc(usersRef, usersPayload);
+      } catch (err) {
+        console.warn("Failed to update users collection:", err);
+        // Không throw error vì students đã cập nhật thành công
+      }
+    }
+
     return { id: sid, ...payload };
   } catch (err) {
     console.error("updateMyProfile:", err);
+    throw err;
+  }
+}
+
+// Cập nhật thông tin cơ bản (tên, email, giới tính, ngày sinh, liên hệ)
+export async function updateBasicInfo(uid, basicInfo = {}) {
+  const allowedFields = ["name", "email", "gender", "dob", "contact"];
+  const filteredInfo = Object.keys(basicInfo).reduce((acc, key) => {
+    if (allowedFields.includes(key) && basicInfo[key] !== undefined) {
+      acc[key] = basicInfo[key];
+    }
+    return acc;
+  }, {});
+
+  if (Object.keys(filteredInfo).length === 0) {
+    throw new Error("No valid basic info fields to update");
+  }
+
+  return await updateMyProfile(uid, filteredInfo);
+}
+
+// Cập nhật avatar
+export async function updateAvatar(uid, avatarUrl) {
+  if (!avatarUrl) {
+    throw new Error("Avatar URL is required");
+  }
+
+  return await updateMyProfile(uid, { avatar: avatarUrl });
+}
+
+// Cập nhật thông tin liên hệ
+export async function updateContactInfo(uid, contactInfo = {}) {
+  const allowedFields = ["contact"];
+  const filteredInfo = Object.keys(contactInfo).reduce((acc, key) => {
+    if (allowedFields.includes(key) && contactInfo[key] !== undefined) {
+      acc[key] = contactInfo[key];
+    }
+    return acc;
+  }, {});
+
+  if (Object.keys(filteredInfo).length === 0) {
+    throw new Error("No valid contact info fields to update");
+  }
+
+  return await updateMyProfile(uid, filteredInfo);
+}
+
+// Cập nhật trạng thái hoạt động
+export async function updateActiveStatus(uid, isActive) {
+  if (typeof isActive !== "boolean") {
+    throw new Error("isActive must be a boolean value");
+  }
+
+  try {
+    const auth = getAuth();
+    const currentUid = uid || (auth.currentUser && auth.currentUser.uid);
+    if (!currentUid) throw new Error("No authenticated user or uid provided");
+
+    const sid = sanitizeId(currentUid);
+    const timestamp = new Date();
+
+    // Cập nhật students collection
+    const studentsRef = doc(studentsCol, sid);
+    await updateDoc(studentsRef, {
+      isActive,
+      lastUpdated: timestamp,
+    });
+
+    // Cập nhật users collection
+    const usersRef = doc(usersCol, sid);
+    try {
+      await updateDoc(usersRef, {
+        isActive,
+        lastUpdated: timestamp,
+      });
+    } catch (err) {
+      console.warn("Failed to update active status in users collection:", err);
+    }
+
+    return { isActive, lastUpdated: timestamp };
+  } catch (err) {
+    console.error("updateActiveStatus:", err);
+    throw err;
+  }
+}
+
+// Đồng bộ dữ liệu từ students sang users collection
+export async function syncStudentToUser(uid) {
+  try {
+    const auth = getAuth();
+    const currentUid = uid || (auth.currentUser && auth.currentUser.uid);
+    if (!currentUid) throw new Error("No authenticated user or uid provided");
+
+    const sid = sanitizeId(currentUid);
+
+    // Lấy dữ liệu từ students collection
+    const studentSnap = await getDoc(doc(studentsCol, sid));
+    if (!studentSnap.exists()) {
+      throw new Error("Student profile not found");
+    }
+
+    const studentData = studentSnap.data();
+
+    // Chuẩn bị dữ liệu cho users collection
+    const usersData = {
+      uid: studentData.uid || studentData.authUid || sid,
+      email: studentData.email,
+      name: studentData.name,
+      role: "student",
+      isActive: studentData.isActive !== false,
+      createdAt: studentData.createdAt || new Date(),
+      lastUpdated: new Date(),
+      sessionExpiry: studentData.sessionExpiry,
+      sessionToken: studentData.sessionToken,
+      password: studentData.password,
+    };
+
+    // Thêm các trường tùy chọn nếu có
+    if (studentData.gender) usersData.gender = studentData.gender;
+    if (studentData.dob) usersData.dob = studentData.dob;
+    if (studentData.contact) usersData.contact = studentData.contact;
+    if (studentData.avatar) usersData.avatar = studentData.avatar;
+
+    // Cập nhật hoặc tạo mới trong users collection
+    const usersRef = doc(usersCol, sid);
+    await updateDoc(usersRef, usersData);
+
+    return usersData;
+  } catch (err) {
+    console.error("syncStudentToUser:", err);
     throw err;
   }
 }
@@ -209,6 +375,28 @@ export async function changePassword(newPassword, currentPassword = null) {
       await reauthenticateWithCredential(user, credential);
     }
     await updatePassword(user, newPassword);
+
+    // Cập nhật password trong cả 2 collection
+    const uid = user.uid;
+    const sid = sanitizeId(uid);
+    const timestamp = new Date();
+
+    try {
+      // Cập nhật students collection
+      await updateDoc(doc(studentsCol, sid), {
+        password: newPassword,
+        lastUpdated: timestamp,
+      });
+
+      // Cập nhật users collection
+      await updateDoc(doc(usersCol, sid), {
+        password: newPassword,
+        lastUpdated: timestamp,
+      });
+    } catch (err) {
+      console.warn("Failed to update password in Firestore:", err);
+    }
+
     return true;
   } catch (err) {
     console.error("changePassword:", err);
@@ -260,6 +448,11 @@ const profileService = {
   getMyParent,
   getMyClass,
   updateMyProfile,
+  updateBasicInfo,
+  updateAvatar,
+  updateContactInfo,
+  updateActiveStatus,
+  syncStudentToUser,
   changePassword,
   getMyAttendance,
   getMyTuition,

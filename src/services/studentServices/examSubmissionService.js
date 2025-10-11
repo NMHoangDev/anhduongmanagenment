@@ -1,3 +1,4 @@
+// src/services/studentServices/examSubmissionService.js
 import { db } from "../firebase";
 import {
   addDoc,
@@ -6,269 +7,406 @@ import {
   getDoc,
   getDocs,
   serverTimestamp,
-  updateDoc,
   query,
   where,
   orderBy,
-  arrayUnion,
 } from "firebase/firestore";
 
-// Helper: tách mảng thành các nhóm tối đa n phần (cho truy vấn 'in')
-const chunk = (arr, size = 10) => {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
+/** ===== Debug helpers ===== */
+const DEBUG_EXAM = true; // đổi thành false nếu muốn tắt log
+
+const logScope = (name, meta = {}) => {
+  const scopeId = `[ExamSvc] ${name}`;
+  if (!DEBUG_EXAM) {
+    // no-op
+    return {
+      start: () => {},
+      end: () => {},
+      log: () => {},
+      error: (...args) => console.error(scopeId, ...args),
+    };
+  }
+  return {
+    start: () => {
+      console.groupCollapsed(scopeId, meta);
+      console.time(scopeId);
+    },
+    end: () => {
+      console.timeEnd(scopeId);
+      console.groupEnd();
+    },
+    log: (...args) => console.log(scopeId, ...args),
+    error: (...args) => console.error(scopeId, ...args),
+  };
 };
 
-// Helper: so sánh hai mảng số (set bằng nhau)
+/** Helper: so sánh hai mảng số như set (bất kể thứ tự) */
 const sameIndexSet = (a = [], b = []) => {
   if (a.length !== b.length) return false;
-  const sa = new Set(a),
-    sb = new Set(b);
+  const sa = new Set(a);
+  const sb = new Set(b);
   for (const v of sa) if (!sb.has(v)) return false;
   return true;
 };
 
-// Lấy các lớp học mà học sinh thuộc về (classes.students chứa studentId)
-export const getStudentClasses = async (studentId) => {
-  if (!studentId) return [];
-  const ref = collection(db, "classes");
-  const q = query(ref, where("students", "array-contains", studentId));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+/** Lấy lớp học mà học sinh thuộc về (chỉ 1 lớp) */
+export const getStudentClass = async (studentId) => {
+  const lg = logScope("getStudentClass", { studentId });
+  lg.start();
+  try {
+    if (!studentId) {
+      throw new Error("studentId rỗng");
+    }
+
+    const classesRef = collection(db, "classes");
+    const qy = query(
+      classesRef,
+      where("students", "array-contains", studentId)
+    );
+    const snap = await getDocs(qy);
+
+    lg.log("classes matched:", snap.size);
+
+    if (snap.empty) {
+      lg.log("Học sinh không thuộc lớp nào");
+      return null;
+    }
+
+    const classDoc = snap.docs[0];
+    const data = { id: classDoc.id, ...classDoc.data() };
+    lg.log("studentClass:", data);
+    return data;
+  } catch (err) {
+    lg.error("FAILED:", err);
+    throw err;
+  } finally {
+    lg.end();
+  }
 };
 
-// Lấy tất cả bài test (examTests) cho học sinh theo các lớp em thuộc về
+/** Lấy các examTests dành cho học sinh theo lớp; kèm cờ hasSubmitted */
 export const getExamTestsForStudent = async (
   studentId,
   { onlyPublished = true } = {}
 ) => {
-  const classes = await getStudentClasses(studentId);
-  const classIds = classes.map((c) => c.id);
-  if (!classIds.length) return [];
+  const lg = logScope("getExamTestsForStudent", { studentId, onlyPublished });
+  lg.start();
+  try {
+    if (!studentId) throw new Error("Student ID không được để trống");
 
-  const tests = [];
-  const classChunks = chunk(classIds, 10);
-  for (const ids of classChunks) {
-    const ref = collection(db, "examTests");
-    const qConds = [where("classId", "in", ids)];
-    if (onlyPublished) {
-      qConds.push(where("status", "==", "published"));
+    // 1) lớp của học sinh
+    const studentClass = await getStudentClass(studentId);
+    if (!studentClass) {
+      lg.log("No class -> return []");
+      return [];
     }
-    const q = query(ref, ...qConds, orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    snap.forEach((d) => {
-      const testData = { id: d.id, ...d.data() };
-      // Kiểm tra học sinh đã nộp bài chưa
-      const hasSubmitted = testData.studentSubmissions?.some(
-        (sub) => sub.studentId === studentId
-      );
-      testData.hasSubmitted = hasSubmitted;
-      tests.push(testData);
-    });
-  }
-  return tests;
-};
 
-// Lấy bài test theo một lớp cụ thể
-export const getExamTestsForClass = async (
-  classId,
-  { onlyPublished = true } = {}
-) => {
-  if (!classId) return [];
-  const ref = collection(db, "examTests");
-  const qConds = [where("classId", "==", classId)];
-  if (onlyPublished) {
-    qConds.push(where("status", "==", "published"));
-  }
-  const q = query(ref, ...qConds, orderBy("createdAt", "desc"));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-};
+    // 2) examTests theo classId
+    const examTestsRef = collection(db, "examTests");
+    const conditions = [where("classId", "==", studentClass.id)];
+    if (onlyPublished) conditions.push(where("status", "==", "published"));
 
-// Lấy chi tiết một bài test (để làm bài)
-export const getExamTestForSubmission = async (examTestId, studentId) => {
-  const examRef = doc(db, "examTests", examTestId);
-  const examSnap = await getDoc(examRef);
-
-  if (!examSnap.exists()) {
-    throw new Error("Không tìm thấy bài kiểm tra");
-  }
-
-  const examData = examSnap.data();
-
-  // Kiểm tra học sinh có trong lớp không
-  const classes = await getStudentClasses(studentId);
-  const hasAccess = classes.some((cls) => cls.id === examData.classId);
-
-  if (!hasAccess) {
-    throw new Error("Bạn không có quyền truy cập bài kiểm tra này");
-  }
-
-  // Kiểm tra đã nộp bài chưa
-  const hasSubmitted = examData.studentSubmissions?.some(
-    (sub) => sub.studentId === studentId
-  );
-
-  if (hasSubmitted) {
-    throw new Error("Bạn đã nộp bài kiểm tra này rồi");
-  }
-
-  // Kiểm tra hạn nộp
-  if (examData.deadline && new Date() > examData.deadline.toDate()) {
-    throw new Error("Đã hết hạn nộp bài");
-  }
-
-  return {
-    id: examSnap.id,
-    ...examData,
-    // Không trả về đáp án đúng cho học sinh
-    questions: examData.questions.map((q) => ({
-      id: q.id,
-      question: q.question,
-      options: q.options,
-      points: q.points,
-      // Không include correctIndexes và explanation
-    })),
-  };
-};
-
-// Submit bài kiểm tra
-export const submitExamTest = async (examTestId, studentId, answers) => {
-  if (!examTestId || !studentId || !Array.isArray(answers)) {
-    throw new Error("Dữ liệu không hợp lệ");
-  }
-
-  // Lấy thông tin bài test
-  const examRef = doc(db, "examTests", examTestId);
-  const examSnap = await getDoc(examRef);
-
-  if (!examSnap.exists()) {
-    throw new Error("Không tìm thấy bài kiểm tra");
-  }
-
-  const examData = examSnap.data();
-
-  // Kiểm tra đã nộp bài chưa
-  const hasSubmitted = examData.studentSubmissions?.some(
-    (sub) => sub.studentId === studentId
-  );
-  if (hasSubmitted) {
-    throw new Error("Bạn đã nộp bài kiểm tra này rồi");
-  }
-
-  // Kiểm tra hạn nộp
-  if (examData.deadline && new Date() > examData.deadline.toDate()) {
-    throw new Error("Đã hết hạn nộp bài");
-  }
-
-  // Lấy thông tin học sinh
-  const studentRef = doc(db, "students", studentId);
-  const studentSnap = await getDoc(studentRef);
-  const studentData = studentSnap.exists() ? studentSnap.data() : {};
-
-  // Chấm điểm
-  const results = [];
-  let totalScore = 0;
-  let correctCount = 0;
-  let totalQuestions = examData.questions.length;
-
-  examData.questions.forEach((question, index) => {
-    const studentAnswer = answers.find((ans) => ans.questionId === question.id);
-    const selectedIndexes = studentAnswer
-      ? studentAnswer.selectedIndexes || []
-      : [];
-
-    const isCorrect = sameIndexSet(
-      selectedIndexes,
-      question.correctIndexes || []
+    const qTests = query(
+      examTestsRef,
+      ...conditions,
+      orderBy("createdAt", "desc")
     );
-    const score = isCorrect ? question.points || 1 : 0;
+    const testsSnap = await getDocs(qTests);
+    lg.log("examTests found:", testsSnap.size);
 
-    if (isCorrect) correctCount++;
-    totalScore += score;
+    const results = [];
+    for (const d of testsSnap.docs) {
+      const data = { id: d.id, ...d.data() };
 
-    results.push({
-      questionId: question.id,
-      questionText: question.question,
-      selectedIndexes,
-      correctIndexes: question.correctIndexes || [],
-      isCorrect,
-      score,
-      maxScore: question.points || 1,
-    });
-  });
+      // 3) check đã nộp? -> query examSubmissions (tách collection)
+      const subsRef = collection(db, "examSubmissions");
+      const qSub = query(
+        subsRef,
+        where("examId", "==", d.id),
+        where("studentId", "==", studentId)
+      );
+      const subSnap = await getDocs(qSub);
 
-  // Tạo submission object
-  const submission = {
+      const row = {
+        ...data,
+        hasSubmitted: !subSnap.empty,
+        className: studentClass.name,
+      };
+      lg.log("row:", { examId: d.id, hasSubmitted: row.hasSubmitted });
+      results.push(row);
+    }
+
+    lg.log("return count:", results.length);
+    return results;
+  } catch (err) {
+    lg.error("FAILED:", err);
+    throw err;
+  } finally {
+    lg.end();
+  }
+};
+
+/** Lấy chi tiết 1 exam để làm bài; chặn nếu đã nộp hoặc hết hạn */
+export const getExamTestForSubmission = async (examTestId, studentId) => {
+  const lg = logScope("getExamTestForSubmission", { examTestId, studentId });
+  lg.start();
+  try {
+    if (!examTestId || !studentId)
+      throw new Error("Thiếu thông tin examTestId hoặc studentId");
+
+    const examRef = doc(db, "examTests", examTestId);
+    const examSnap = await getDoc(examRef);
+    if (!examSnap.exists()) throw new Error("Không tìm thấy bài kiểm tra");
+
+    const examData = examSnap.data();
+    lg.log("examData.title:", examData?.title);
+
+    // quyền truy cập theo class
+    const studentClass = await getStudentClass(studentId);
+    const hasAccess = studentClass && studentClass.id === examData.classId;
+    lg.log("hasAccess:", hasAccess);
+    if (!hasAccess)
+      throw new Error("Bạn không có quyền truy cập bài kiểm tra này");
+
+    // đã nộp?
+    const subsRef = collection(db, "examSubmissions");
+    const qSub = query(
+      subsRef,
+      where("examId", "==", examTestId),
+      where("studentId", "==", studentId)
+    );
+    const subSnap = await getDocs(qSub);
+    lg.log("alreadySubmitted:", !subSnap.empty);
+    if (!subSnap.empty) throw new Error("Bạn đã nộp bài kiểm tra này rồi");
+
+    // deadline
+    if (examData.deadline) {
+      const deadline = examData.deadline.toDate
+        ? examData.deadline.toDate()
+        : new Date(examData.deadline);
+      lg.log("deadline:", deadline);
+      if (new Date() > deadline) throw new Error("Đã hết hạn nộp bài");
+    }
+
+    const safe = {
+      id: examSnap.id,
+      ...examData,
+      questions: (examData.questions || []).map((q) => ({
+        id: q.id,
+        question: q.question,
+        options: q.options,
+        points: q.points,
+      })),
+    };
+    lg.log("return questions:", safe.questions?.length || 0);
+    return safe;
+  } catch (err) {
+    lg.error("FAILED:", err);
+    throw err;
+  } finally {
+    lg.end();
+  }
+};
+
+/**
+ * Submit bài kiểm tra -> tạo document mới trong collection examSubmissions
+ * Signature giữ backward-compatible; `startTime` là optional để tính thời gian làm bài.
+ */
+export const submitExamTest = async (
+  examTestId,
+  studentId,
+  answers,
+  startTime /* optional */
+) => {
+  const lg = logScope("submitExamTest", {
+    examTestId,
     studentId,
-    studentName: studentData.name || "Không rõ",
-    studentCode: studentData.studentCode || studentData.id || "",
-    submittedAt: serverTimestamp(),
-    answers: results,
-    totalScore,
-    maxScore: examData.totalPoints || 0,
-    correctCount,
-    totalQuestions,
-    percentage:
+    answersCount: Array.isArray(answers) ? answers.length : "N/A",
+    startTime: startTime instanceof Date ? startTime.toISOString() : startTime,
+  });
+  lg.start();
+  try {
+    if (!examTestId || !studentId || !Array.isArray(answers))
+      throw new Error("Dữ liệu không hợp lệ");
+
+    // exam
+    const examRef = doc(db, "examTests", examTestId);
+    const examSnap = await getDoc(examRef);
+    if (!examSnap.exists()) throw new Error("Không tìm thấy bài kiểm tra");
+    const examData = examSnap.data();
+    lg.log("exam.title:", examData?.title);
+
+    // không cho nộp lần 2
+    const subsRef = collection(db, "examSubmissions");
+    const qDup = query(
+      subsRef,
+      where("examId", "==", examTestId),
+      where("studentId", "==", studentId)
+    );
+    const dupSnap = await getDocs(qDup);
+    lg.log("dup submissions:", dupSnap.size);
+    if (!dupSnap.empty) throw new Error("Bạn đã nộp bài kiểm tra này rồi");
+
+    // deadline
+    if (examData.deadline) {
+      const deadline = examData.deadline.toDate
+        ? examData.deadline.toDate()
+        : new Date(examData.deadline);
+      lg.log("deadline:", deadline);
+      if (new Date() > deadline) throw new Error("Đã hết hạn nộp bài");
+    }
+
+    // thông tin học sinh
+    const studentRef = doc(db, "students", studentId);
+    const studentSnap = await getDoc(studentRef);
+    const studentData = studentSnap.exists() ? studentSnap.data() : {};
+    lg.log("student:", {
+      name: studentData?.name,
+      code: studentData?.studentCode,
+    });
+
+    // chấm điểm
+    let totalScore = 0;
+    let correctCount = 0;
+    const totalQuestions = (examData.questions || []).length;
+    const results = [];
+
+    (examData.questions || []).forEach((question, idx) => {
+      const studentAnswer = answers.find(
+        (ans) => ans.questionId === question.id
+      );
+      const selectedIndexes = studentAnswer
+        ? studentAnswer.selectedIndexes || []
+        : [];
+      const isCorrect = sameIndexSet(
+        selectedIndexes,
+        question.correctIndexes || []
+      );
+      const score = isCorrect ? question.points || 1 : 0;
+
+      if (isCorrect) correctCount++;
+      totalScore += score;
+
+      results.push({
+        questionId: question.id,
+        questionText: question.question,
+        selectedIndexes,
+        correctIndexes: question.correctIndexes || [],
+        isCorrect,
+        score,
+        maxScore: question.points || 1,
+      });
+
+      lg.log(`Q${idx + 1}`, {
+        selectedIndexes,
+        correctIndexes: question.correctIndexes || [],
+        isCorrect,
+        score,
+      });
+    });
+
+    const percentage =
       totalQuestions > 0
         ? Math.round((correctCount / totalQuestions) * 100)
-        : 0,
-  };
+        : 0;
 
-  // Cập nhật bài test với submission mới
-  await updateDoc(examRef, {
-    studentSubmissions: arrayUnion(submission),
-  });
+    // thời gian làm bài (optional)
+    let timeSpentMinutes = 0;
+    if (startTime instanceof Date && !Number.isNaN(startTime.getTime())) {
+      const endTime = new Date();
+      timeSpentMinutes = Math.round((endTime - startTime) / 1000 / 60);
+    }
+    lg.log("score summary:", {
+      totalQuestions,
+      correctCount,
+      totalScore,
+      maxScore: examData.totalPoints || 0,
+      percentage,
+      timeSpentMinutes,
+    });
 
-  return {
-    submissionId: `${examTestId}_${studentId}`,
-    ...submission,
-    examTitle: examData.title,
-    examId: examTestId,
-  };
+    const submission = {
+      examId: examTestId,
+      examTitle: examData.title,
+      studentId,
+      studentName: studentData.name || "Không rõ",
+      studentCode: studentData.studentCode || studentData.id || "",
+      submittedAt: serverTimestamp(),
+      timeSpentMinutes,
+      answers: results,
+      totalScore,
+      maxScore: examData.totalPoints || 0,
+      correctCount,
+      totalQuestions,
+      percentage,
+    };
+
+    // lưu vào collection mới
+    const docRef = await addDoc(collection(db, "examSubmissions"), submission);
+    lg.log("created submission id:", docRef.id);
+
+    return { id: docRef.id, ...submission };
+  } catch (err) {
+    lg.error("FAILED:", err);
+    throw err;
+  } finally {
+    lg.end();
+  }
 };
 
-// Lấy kết quả bài làm của học sinh
+/** Lấy bài làm của 1 học sinh cho 1 exam (từ examSubmissions) */
 export const getStudentSubmission = async (examTestId, studentId) => {
-  const examRef = doc(db, "examTests", examTestId);
-  const examSnap = await getDoc(examRef);
+  const lg = logScope("getStudentSubmission", { examTestId, studentId });
+  lg.start();
+  try {
+    if (!examTestId || !studentId)
+      throw new Error("Thiếu thông tin examTestId hoặc studentId");
 
-  if (!examSnap.exists()) {
-    throw new Error("Không tìm thấy bài kiểm tra");
+    const subsRef = collection(db, "examSubmissions");
+    const qSub = query(
+      subsRef,
+      where("examId", "==", examTestId),
+      where("studentId", "==", studentId)
+    );
+    const snap = await getDocs(qSub);
+    lg.log("matched submissions:", snap.size);
+
+    if (snap.empty) throw new Error("Không tìm thấy bài làm của học sinh");
+
+    const d = snap.docs[0];
+    const data = { id: d.id, ...d.data() };
+    lg.log("return submission id:", data.id);
+    return data;
+  } catch (err) {
+    lg.error("FAILED:", err);
+    throw err;
+  } finally {
+    lg.end();
   }
-
-  const examData = examSnap.data();
-  const submission = examData.studentSubmissions?.find(
-    (sub) => sub.studentId === studentId
-  );
-
-  if (!submission) {
-    throw new Error("Không tìm thấy bài làm của học sinh");
-  }
-
-  return {
-    ...submission,
-    examTitle: examData.title,
-    examId: examTestId,
-  };
 };
 
-// Lấy tất cả submissions của một bài test (cho giáo viên)
+/** Lấy tất cả submissions của một exam (cho giáo viên) */
 export const getExamTestSubmissions = async (examTestId) => {
-  const examRef = doc(db, "examTests", examTestId);
-  const examSnap = await getDoc(examRef);
+  const lg = logScope("getExamTestSubmissions", { examTestId });
+  lg.start();
+  try {
+    if (!examTestId) throw new Error("Thiếu examTestId");
 
-  if (!examSnap.exists()) {
-    throw new Error("Không tìm thấy bài kiểm tra");
+    const subsRef = collection(db, "examSubmissions");
+    const qSub = query(subsRef, where("examId", "==", examTestId));
+    const snap = await getDocs(qSub);
+
+    const submissions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    lg.log("count:", submissions.length);
+    return {
+      examId: examTestId,
+      submissions,
+      submissionCount: submissions.length,
+    };
+  } catch (err) {
+    lg.error("FAILED:", err);
+    throw err;
+  } finally {
+    lg.end();
   }
-
-  const examData = examSnap.data();
-  return {
-    examTitle: examData.title,
-    examId: examTestId,
-    totalPoints: examData.totalPoints || 0,
-    submissions: examData.studentSubmissions || [],
-    submissionCount: (examData.studentSubmissions || []).length,
-  };
 };
